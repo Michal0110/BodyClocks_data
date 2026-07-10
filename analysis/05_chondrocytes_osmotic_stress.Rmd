@@ -52,13 +52,13 @@ dds$timepoint <- factor(dds$timepoint, levels = c("0h",
 dds1 <- DESeq(dds)
 res <- results(dds1, contrast = c("timepoint", "4h", "0h"))
 res_table <- as.data.frame(res)
-rld <- rlog(dds1, blind=FALSE)
+norm_counts <- as.data.frame(counts(dds1, normalized = TRUE))
 ```
 
 
 ```{r run_rain}
 # RAIN circadian analaysis
-rain_data <- assay(rld)
+rain_data <- as.matrix(norm_counts)
 
 rain_data <- subset(rain_data, select = c(X4h_A2, X28h_A8, X4h_B2, X28h_B8, X4h_C2, X28h_C8,
 X8h_A3, X32h_A9, X8h_B3, X32h_B9, X8h_C3, X32h_C9,
@@ -75,7 +75,6 @@ results <- rain(t(rain_data), deltat=4, period=24, nr.series=6,
 p_values <- results$pVal
 
 results$BH.Q <- p.adjust(p_values, method = "BH")
-norm_counts <- as.data.frame(counts(dds1, normalized=TRUE))
 norm_counts <- subset(norm_counts, select = -c(X0h_A1, X0h_B1, X0h_C1))
 osm_circ <- merge(norm_counts, results, by = 0, all.x = TRUE)
 

@@ -351,14 +351,18 @@ run_pairwise_overlap <- function(gene_lists, gene_universes, bhq_label) {
         Expected        = round(res$expected, 2),
         Fold_Enrichment = round(res$fold_enrichment, 2),
         Jaccard_Index   = round(res$jaccard, 3),
-        P_value         = format(res$p_value, scientific = TRUE, digits = 3),
+        P_value         = res$p_value,
         Significant     = ifelse(res$p_value < 0.05, "Yes", "No"),
         BH.Q.cut.off    = bhq_label,
         stringsAsFactors = FALSE
       ))
     }
   }
-  results
+  results %>%
+    mutate(
+      BH_adjusted_P_value = p.adjust(P_value, method = "BH"),
+      Significant_BH = ifelse(BH_adjusted_P_value < 0.05, "Yes", "No")
+    )
 }
 
 results_05 <- run_pairwise_overlap(gene_lists, gene_universes, "0.05")
@@ -374,7 +378,9 @@ results_01 <- run_pairwise_overlap(gene_lists_01, gene_universes, "0.01")
 pairwise_universe_results <- results_05  # used downstream
 
 supp2 <- bind_rows(results_05, results_01) %>%
-  dplyr::rename(`BH.Q cut-off` = BH.Q.cut.off)
+  dplyr::rename(`BH.Q cut-off` = BH.Q.cut.off) %>%
+  relocate(BH_adjusted_P_value, .after = P_value) %>%
+  relocate(Significant_BH, .after = Significant)
 
 write.csv(supp2,
           "results/publication_figures/Supplementary_table_2.csv",
@@ -496,6 +502,77 @@ for (ds_name in stress_ds_names) {
   }
 }
 
+# ── Three-way CRP concordance and permutation test ───────────────────────────
+# RAIN phases are discrete 4 h values. Shuffling whole CRP vectors preserves
+# each dataset's observed phase-bin frequencies (including ties) while breaking
+# the gene-wise correspondence between datasets.
+circ_dist_threshold_3way <- 4
+
+crp_wide_3way <- crp_data %>%
+  dplyr::select(gene, dataset, clock_relative_phase) %>%
+  pivot_wider(names_from = dataset, values_from = clock_relative_phase) %>%
+  filter(!is.na(Osmo), !is.na(Dex), !is.na(HS))
+
+three_way_gene_results <- crp_wide_3way %>%
+  mutate(
+    dist_osmo_dex_h = circ_dist_24(Osmo, Dex),
+    dist_osmo_hs_h  = circ_dist_24(Osmo, HS),
+    dist_dex_hs_h   = circ_dist_24(Dex, HS),
+    max_pairwise_dist_h = pmax(dist_osmo_dex_h, dist_osmo_hs_h, dist_dex_hs_h),
+    three_way_concordant = max_pairwise_dist_h <= circ_dist_threshold_3way
+  )
+
+n_genes_3way  <- nrow(three_way_gene_results)
+obs_3way_n    <- sum(three_way_gene_results$three_way_concordant)
+obs_3way_pct  <- 100 * obs_3way_n / n_genes_3way
+n_perm_3way   <- 10000
+seed_3way     <- 42
+
+set.seed(seed_3way)
+perm_3way_pcts <- replicate(n_perm_3way, {
+  dex_perm <- sample(three_way_gene_results$Dex)
+  hs_perm  <- sample(three_way_gene_results$HS)
+
+  dist_osmo_dex <- circ_dist_24(three_way_gene_results$Osmo, dex_perm)
+  dist_osmo_hs  <- circ_dist_24(three_way_gene_results$Osmo, hs_perm)
+  dist_dex_hs   <- circ_dist_24(dex_perm, hs_perm)
+
+  concordant <- dist_osmo_dex <= circ_dist_threshold_3way &
+    dist_osmo_hs <= circ_dist_threshold_3way &
+    dist_dex_hs <= circ_dist_threshold_3way
+
+  100 * mean(concordant)
+})
+
+n_perm_as_or_more_extreme <- sum(perm_3way_pcts >= obs_3way_pct)
+# Add the observed arrangement to the Monte Carlo reference distribution so
+# that the estimated permutation p-value cannot be zero.
+perm_3way_p <- (n_perm_as_or_more_extreme + 1) / (n_perm_3way + 1)
+
+three_way_summary <- data.frame(
+  comparison                 = "Osmo_vs_Dex_vs_HS",
+  n_genes                    = n_genes_3way,
+  n_concordant               = obs_3way_n,
+  pct_concordant             = round(obs_3way_pct, 1),
+  threshold_h                = circ_dist_threshold_3way,
+  perm_null_mean_pct         = round(mean(perm_3way_pcts), 1),
+  perm_null_sd_pct           = round(sd(perm_3way_pcts), 2),
+  perm_p_value               = perm_3way_p,
+  n_permutations             = n_perm_3way,
+  n_perm_as_or_more_extreme  = n_perm_as_or_more_extreme,
+  seed                       = seed_3way,
+  stringsAsFactors = FALSE
+)
+
+write.csv(
+  three_way_summary,
+  "results/publication_figures/crp_3way_summary.csv",
+  row.names = FALSE
+)
+
+cat("\n=== THREE-WAY CRP PERMUTATION TEST ===\n")
+print(three_way_summary)
+
 # ── CRP consistency ──────────────────────────────────────────────────────────
 consistency_threshold <- 0.75
 
@@ -515,13 +592,26 @@ crp_consistency <- crp_data %>%
     crp_values = paste(sprintf("%s:%.1f", dataset, clock_relative_phase), collapse = ", "),
     .groups = "drop"
   ) %>%
-  filter(n_datasets >= 2) %>%
+  filter(n_datasets == length(stress_ds_names)) %>%
   arrange(circ_sd_crp) %>%
+  left_join(
+    three_way_gene_results %>%
+      dplyr::select(gene, dist_osmo_dex_h, dist_osmo_hs_h, dist_dex_hs_h,
+                    max_pairwise_dist_h, three_way_concordant),
+    by = "gene"
+  ) %>%
   mutate(
-    classification = ifelse(circ_sd_crp <= consistency_threshold,
+    classification = ifelse(three_way_concordant,
                             "Clock-controlled", "Variable"),
     is_core_clock  = gene %in% core_clock_genes
   )
+
+# For phases restricted to the 4 h RAIN grid, the historical circular-SD
+# threshold and the explicit all-pairwise-distance criterion should agree.
+if (any((crp_consistency$circ_sd_crp <= consistency_threshold) !=
+        crp_consistency$three_way_concordant)) {
+  stop("Circular-SD and explicit three-way CRP classifications disagree.")
+}
 
 cat(sprintf("\nClock-controlled: %d  |  Variable: %d\n",
             sum(crp_consistency$classification == "Clock-controlled"),
@@ -940,4 +1030,3 @@ ggsave("results/publication_figures/Fig3A_enrichment_barchart.pdf",
 ggsave("results/publication_figures/Fig3A_enrichment_barchart.png",
        plot = p_bar_combined, width = 7, height = 10, dpi = 300)
 ```
-

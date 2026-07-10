@@ -64,10 +64,7 @@ dds <- dds [rowMeans(counts(dds)) >= 50, ]
 
 dds$condition <- factor(dds$time, levels = c("4h", "8h", "12h", "16h", "20h", "24h", "28h", "32h", "36h", "40h", "44h", "48h"))
 dds1 <- DESeq(dds)
-
-vsd <- vst(dds1, blind=FALSE)
-data_order <- c("4h", "8h", "12h", "16h", "20h", "24h", "28h", "32h", "36h", "40h", "44h", "48h")
-vsd$time <- factor(vsd$time, levels = data_order)
+norm_counts <- counts(dds1, normalized = TRUE)
 
 ```
 
@@ -75,8 +72,7 @@ vsd$time <- factor(vsd$time, levels = data_order)
 ```{r run_rain_annotate}
 # RAIN circadian analysis
 
-hs <- assay(vsd)
-#hs <- counts(dds1, normalized=TRUE)
+hs <- norm_counts
 col_names <- c("hs_04h_a", "hs_08h_a", "hs_12h_a", "hs_16h_a", "hs_20h_a", "hs_24h_a", "hs_28h_a", "hs_32h_a", "hs_36h_a", "hs_40h_a", "hs_44h_a", "hs_48h_a", "hs_04h_b", "hs_08h_b", "hs_12h_b", "hs_16h_b", "hs_20h_b", "hs_28h_b", "hs_32h_b", "hs_36h_b", "hs_40h_b", "hs_44h_b", "hs_48h_b", "hs_04h_c", "hs_08h_c", "hs_12h_c", "hs_16h_c", "hs_20h_c", "hs_24h_c", "hs_28h_c", "hs_32h_c", "hs_36h_c", "hs_40h_c", "hs_44h_c", "hs_48h_c")
 colnames(hs) <- col_names
 hs <- hs[, order(colnames(hs))]
@@ -88,7 +84,6 @@ p_values_hs <- hs_RAIN$pVal
 
 hs_RAIN$BH.Q <- p.adjust(p_values_hs, method = "BH")
 
-norm_counts <- counts(dds1, normalized=TRUE)
 hs_circ <- merge(norm_counts, hs_RAIN, by = 0, all.x = TRUE)
 
 # Remove .xx from the Row.names column
@@ -176,7 +171,7 @@ dev.off()
 # Get STRING DB interaction data and functional enrichment
 
 nodes_data <- merged %>%
-    filter(BH.Q <= 0.005) %>% # 0.005 cut of to have a manageble number of genes
+    filter(BH.Q <= 0.05) %>% 
     dplyr::rename(symbol = preferred_symbol)
 
 
@@ -304,4 +299,3 @@ display_dt <- dt %>%
 
 save_rds_checked(display_dt, file = "results/shiny_data/mouse/hs/hs_display_dt.rds")
 ```
-

@@ -1,84 +1,118 @@
-# BodyClocks Data Processing
+# BodyClocks data and analysis pipeline
 
-This repository contains the analysis pipeline used to process raw circadian
-transcriptomic datasets into RDS files consumed by the BodyClocks Shiny app,
-and to generate the manuscript figures and supplementary tables.
+This repository contains the reproducible R workflow supporting the BodyClocks
+study of circadian transcriptomes. It processes curated mouse and baboon
+transcriptomic datasets into a common set of circadian statistics, functional
+annotations and STRING association networks; prepares data files consumed by
+the [BodyClocks](https://www.bodyclocks.org) web application; and generates the
+figures and supplementary tables accompanying the manuscript.
 
-The active analysis scripts are in `analysis/`. Raw input data are tracked with
-Git LFS so the repository can remain self-contained without embedding large
-files directly in Git history.
+The workflow starts from the gene-level count or expression matrices supplied
+in `data/raw/`. FASTQ quality control, trimming and genome alignment for newly
+generated sequencing data are described in the manuscript but are not executed
+by this repository.
 
-## Repository Layout
+## Repository contents
 
-- `analysis/` — numbered dataset processing scripts.
-- `R/` — shared utilities for I/O, annotation, BioMart, STRINGdb, and validation.
-- `data/raw/` — raw input data files tracked with Git LFS.
-- `data/meta/` — metadata files.
-- `config/output_manifest.csv` — expected Shiny app RDS outputs.
-- `data_manifest.csv` — raw/meta data inventory with SHA-256 checksums.
-- `results/` — generated outputs; ignored by Git except `results/publication_figures/`.
-- `results/publication_figures/` — manuscript-ready figures and supplementary tables.
+- `analysis/` — dataset-processing notebooks and manuscript comparison analyses.
+- `R/` — shared functions for input/output, validation, annotation, BioMart and
+  STRINGdb processing.
+- `data/raw/` — input count and expression matrices, with large files managed by
+  Git LFS.
+- `data/meta/` — sample metadata.
+- `data_manifest.csv` — input-file provenance, accession information and SHA-256
+  checksums.
+- `config/output_manifest.csv` — expected data products for the BodyClocks app.
+- `results/publication_figures/` — manuscript figures and supplementary tables.
+- `docs/` — data-source, environment, script-inventory and archival documentation.
 
-## Environment
+The [script inventory](docs/script_inventory.md) lists the inputs, outputs and
+external services used by each analysis.
 
-Install Git LFS before cloning or before adding raw data, then create and
-activate the conda environment and restore renv:
+## Installation
+
+The reproducible environment combines conda, which supplies R and system
+libraries, with renv, which pins R package versions. Install conda and Git LFS,
+then run:
 
 ```sh
 git lfs install
+git lfs pull
 conda env create -f environment.yml
 conda activate bodyclocks_data
 Rscript -e "renv::restore()"
 ```
 
-Conda pins R and system libraries. renv pins R package versions inside that
-environment.
+The environment is based on R 4.5.2. See [environment documentation](docs/environment.md)
+and `renv.lock` for the complete software specification.
 
-## Running
+## Reproducing the analysis
 
-Validate the pipeline structure:
+Run a structural validation before starting the analyses:
 
 ```sh
 Rscript run_analysis.R --dry-run
 ```
 
-Run all analyses:
-
-```sh
-Rscript run_analysis.R
-```
-
-Run selected scripts:
-
-```sh
-Rscript run_analysis.R --scripts=03,09 --fail-fast
-```
-
-Run the standalone pairwise similarity analysis only:
-
-```sh
-Rscript run_analysis.R --scripts=pairwise --fail-fast
-```
-
-Reproduce only the paper comparison figures and tables:
+To reproduce the manuscript comparison figures and supplementary tables:
 
 ```sh
 Rscript run_analysis.R --scripts=paper --fail-fast
 ```
 
-The `paper` target automatically runs the required upstream scripts first: `01` cartilage, `03` dexamethasone chondrocytes, `04` heat-shock chondrocytes, and `05` osmotic-stress chondrocytes. It then renders `analysis/comparison_analysis_paper.rmd` and runs `analysis/pairwise_similarity_analysis.R`. Use this target to regenerate the manuscript figures and supplementary tables in `results/publication_figures/` without running the full app data-processing pipeline.
+The `paper` target runs all mouse dataset-processing scripts required by the
+cross-dataset analysis; it does not process the baboon atlas. It then renders
+the focal chondrocyte/cartilage comparison and runs the mouse pairwise-similarity
+analysis that generates Figures 1E and 1F. The pairwise analysis applies its
+configured exclusions to knockout datasets and xiphoid cartilage. Results are
+written to `results/publication_figures/`.
 
-## Publication Notes
+To process every configured dataset and generate all app and publication data
+products:
 
-Before depositing on Zenodo:
+```sh
+Rscript run_analysis.R --fail-fast
+```
 
-1. Confirm `data_manifest.csv` source/accession fields are complete.
-2. Run `git lfs pull` so raw input data are present locally.
-3. Confirm the archive contains full data files rather than LFS pointer files.
-4. Include source code, raw/meta data, environment files, and `results/publication_figures/`; do not include the rest of `results/` unless you intentionally want to archive generated intermediates.
-5. Record the final release tag and DOI in `docs/zenodo_deposit.md`.
+Individual analyses can be selected by their identifiers. For example:
 
-External annotation services used by this pipeline, especially Ensembl BioMart
-and STRINGdb, can fail transiently. Shared wrappers in `R/` are designed to
-retry and fail loudly rather than silently producing partial annotation.
+```sh
+Rscript run_analysis.R --scripts=03,09 --fail-fast
+```
 
+The standalone cross-dataset similarity analysis can be run after its required
+dataset outputs have been generated:
+
+```sh
+Rscript run_analysis.R --scripts=pairwise --fail-fast
+```
+
+Generated reports, intermediate tables, caches and app-ready RDS files are
+written below `results/`. Only publication-ready outputs are retained in version
+control.
+
+## External resources and reproducibility
+
+Some analyses query Ensembl BioMart and STRING v12.0, so an internet connection
+is required when the corresponding cached annotations are unavailable. Shared
+wrappers retry transient failures and stop rather than silently returning
+partial annotations. For long-term reproducibility, release archives should
+include the input matrices, metadata, manifests, environment files and final
+publication outputs.
+
+The machine-readable data inventory is `data_manifest.csv`; source information
+is described further in the [data-source documentation](docs/data_sources.md).
+The analysis uses stable Ensembl identifiers for cross-dataset comparisons where
+available and supplies MGI or external gene symbols for display.
+
+## Related resources
+
+- Web application: [BodyClocks.org](https://www.bodyclocks.org)
+- Application source code: [Michal0110/BodyClocks](https://github.com/Michal0110/BodyClocks)
+- Analysis source code: [Michal0110/BodyClocks_data](https://github.com/Michal0110/BodyClocks_data)
+
+## Citation
+
+If you use this workflow or its processed data, please cite the associated
+publication and the archived software release. Machine-readable citation
+metadata are provided in [`CITATION.cff`](CITATION.cff).

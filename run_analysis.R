@@ -48,7 +48,11 @@ scripts <- c(
 )
 
 script_dependencies <- list(
-  paper = c("01", "03", "04", "05")
+  # The manuscript comparison includes Figures 1E and 1F from the pairwise
+  # similarity analysis, which requires outputs from every mouse-processing
+  # script. Script 12 is the baboon atlas and is intentionally omitted.
+  paper = c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10",
+            "11", "13")
 )
 
 script_post_dependencies <- list(
@@ -139,4 +143,3 @@ if (length(failures)) {
 
 cat("Run completed:", format(Sys.time()), "\n", file = log_path, append = TRUE)
 message("Analysis complete.")
-
