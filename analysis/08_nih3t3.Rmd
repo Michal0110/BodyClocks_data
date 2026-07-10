@@ -39,16 +39,15 @@ nih3t3 <- read.csv("data/raw/NIH3T3_Forskolin.csv")
 duplicates <- nih3t3$ENSEMBL[duplicated(nih3t3$ENSEMBL) | duplicated(nih3t3$ENSEMBL, fromLast = TRUE)]
 duplicates_df <- nih3t3[nih3t3$ENSEMBL %in% duplicates, c("ENSEMBL", "Symbol")]
 
-# Microarray data often has multiple probes for the same gene, so we need to collapse these duplicates. We will keep the probe with the highest mean expression across all timepoints for each gene.
+# Microarray data has multiple probes for the same gene, so these duplicates are collapsed. Probe with the highest mean expression across all timepoints for each gene is kept.
 cleaned_data <- nih3t3 %>%
-  # 1. Calculate the mean expression across all your timepoint columns
-  # (Make sure to exclude your ID/Symbol columns from the math)
+  # Calculate the mean expression across all timepoint columns
   mutate(mean_expr = rowMeans(dplyr::select(., -ENSEMBL, -Symbol))) %>%
   
-  # 2. Group the data by the reliable Ensembl ID
+  # Group the data by the reliable Ensembl ID
   group_by(ENSEMBL) %>%
   
-  # 3. For every duplicate, keep ONLY the one with the highest mean expression
+  # For every duplicate, keep ONLY the one with the highest mean expression
   slice_max(order_by = mean_expr, n = 1, with_ties = FALSE) %>%
   
   # 4. Clean up the grouping and drop the temporary math column
@@ -72,7 +71,7 @@ RAIN$BH.Q <- p.adjust(p_values, method = "BH")
 RAIN$ENSEMBL <- row.names(RAIN)
 
 
-# merge  RAIN  by row names with tendon_filtered  by ensemble ID
+# merge RAIN by row names with tendon_filtered  by ensemble ID
 analysed <- merge(cleaned_data, RAIN, by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
 ```
 
@@ -115,8 +114,6 @@ write.csv(merged, file = "results/tables/nih3t3_circ.csv", row.names = FALSE)
 
 
 ```{r prepare_string_nodes}
-# Get STRING DB interaction data and functional enrichment
-
 nodes_data <- merged %>%
     filter(BH.Q <= 0.05) %>%
     dplyr::rename(symbol = preferred_symbol)
@@ -125,25 +122,16 @@ nodes_data <- merged %>%
 gene_list <- nodes_data$ENSEMBL
 
 # Create comprehensive gene mapping dictionary
-
-# Create the mapping using your existing data
 gene_mapping <- create_gene_mapping(
   gene_ids = merged$ENSEMBL,
   symbols = nodes_data$symbol
 )
 
 cat("Created mapping for", length(gene_mapping), "genes\n")
-
-# Map STRING preferred names to MGI symbols
 ```
 
 ```{r build_string_network}
 # Get protein-protein interactions and enrichment data using STRINGdb
-
-# Function to get protein-protein interactions (edges)
-
-
-# Function to get selected enrichment data
 
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,
@@ -259,10 +247,4 @@ display_dt <- dt %>%
   arrange(BH.Q)
 
 save_rds_checked(display_dt, file = "results/shiny_data/mouse/nih3t3/nih3t3_display_dt.rds")
-```
-
-
-```{r scratch}
-
-
 ```

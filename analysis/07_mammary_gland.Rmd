@@ -16,10 +16,6 @@ ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
 ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
 ```
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
-
 ## Load libraries
 
 ```{r libraries, message=FALSE}
@@ -161,7 +157,6 @@ gene_list <- nodes_data$ENSEMBL
 
 # Create comprehensive gene mapping dictionary
 
-# Create the mapping using your existing data
 gene_mapping <- create_gene_mapping(
   gene_ids = merged$ENSEMBL,
   symbols = nodes_data$symbol
@@ -174,11 +169,6 @@ cat("Created mapping for", length(gene_mapping), "genes\n")
 
 ```{r build_string_network}
 # Get protein-protein interactions and enrichment data using STRINGdb
-
-# Function to get protein-protein interactions (edges)
-
-
-# Function to get selected enrichment data
 
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,
@@ -235,7 +225,6 @@ save_rds_checked(plotting2, file = "results/shiny_data/mouse/mammary_gland/mamma
 
 ```{r compute_amplitude_display_table}
 # Process data frame for plotting in bodyclocks shiny app
-# Table for display
 dt <- merged
 
 dt <- dt %>%

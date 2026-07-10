@@ -113,7 +113,11 @@ get_string_network <- function(gene_list, gene_mapping, string_db, nodes_data = 
 
   gene_list <- unique(stats::na.omit(as.character(gene_list)))
   if (!length(gene_list)) {
-    return(data.frame(from = character(), to = character()))
+    return(data.frame(
+      from = character(),
+      to = character(),
+      combined_score = numeric()
+    ))
   }
 
   tryCatch({
@@ -138,6 +142,7 @@ get_string_network <- function(gene_list, gene_mapping, string_db, nodes_data = 
     edges <- data.frame(
       from = vapply(interactions$from, resolve, character(1)),
       to = vapply(interactions$to, resolve, character(1)),
+      combined_score = as.numeric(interactions$combined_score),
       stringsAsFactors = FALSE
     )
 
@@ -219,7 +224,11 @@ get_string_network_bundle <- function(gene_list, gene_mapping, species_id,
 empty_string_edges_by_threshold <- function(thresholds = STRING_SCORE_THRESHOLDS) {
   thresholds <- unique(as.integer(thresholds))
   stats::setNames(
-    lapply(thresholds, function(x) data.frame(from = character(), to = character())),
+    lapply(thresholds, function(x) data.frame(
+      from = character(),
+      to = character(),
+      combined_score = numeric()
+    )),
     as.character(thresholds)
   )
 }

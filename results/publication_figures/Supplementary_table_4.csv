@@ -1,25 +1,25 @@
 "Category","Dataset1","Dataset2","Size1","Size2","Overlap","Expected","Fold_Enrichment","Jaccard_Index","P_value","Significant","Percent_of_D1","Percent_of_D2"
-"KEGG Pathways","Osmo","Dex",4,20,2,0.76,2.62,0.091,"1.63e-01","No",50,10
-"KEGG Pathways","Osmo","HS",4,63,2,2.4,0.83,0.031,"8.25e-01","No",50,3.2
-"KEGG Pathways","Osmo","Cartilage",4,55,1,2.1,0.48,0.017,"9.52e-01","No",25,1.8
-"KEGG Pathways","Dex","HS",20,63,8,12,0.67,0.107,"9.88e-01","No",40,12.7
-"KEGG Pathways","Dex","Cartilage",20,55,8,10.48,0.76,0.119,"9.31e-01","No",40,14.5
-"KEGG Pathways","HS","Cartilage",63,55,24,33,0.73,0.255,"1e+00","No",38.1,43.6
-"GO Biological Process","Osmo","Dex",80,455,55,35.07,1.57,0.115,"2.58e-06","Yes",68.8,12.1
-"GO Biological Process","Osmo","HS",80,583,48,44.93,1.07,0.078,"2.75e-01","No",60,8.2
-"GO Biological Process","Osmo","Cartilage",80,689,33,53.1,0.62,0.045,"1e+00","No",41.2,4.8
-"GO Biological Process","Dex","HS",455,583,329,255.55,1.29,0.464,"7.14e-21","Yes",72.3,56.4
-"GO Biological Process","Dex","Cartilage",455,689,290,302.02,0.96,0.34,"9.51e-01","No",63.7,42.1
-"GO Biological Process","HS","Cartilage",583,689,357,386.98,0.92,0.39,"1e+00","No",61.2,51.8
-"Reactome","Osmo","Dex",11,41,4,4.03,0.99,0.083,"6.27e-01","No",36.4,9.8
-"Reactome","Osmo","HS",11,60,4,5.89,0.68,0.06,"9.37e-01","No",36.4,6.7
-"Reactome","Osmo","Cartilage",11,53,1,5.21,0.19,0.016,"9.99e-01","No",9.1,1.9
-"Reactome","Dex","HS",41,60,25,21.96,1.14,0.329,"1.59e-01","No",61,41.7
-"Reactome","Dex","Cartilage",41,53,15,19.4,0.77,0.19,"9.73e-01","No",36.6,28.3
-"Reactome","HS","Cartilage",60,53,24,28.39,0.85,0.27,"9.69e-01","No",40,45.3
-"WikiPathways","Osmo","Dex",1,5,1,0.2,5,0.2,"2e-01","No",100,20
-"WikiPathways","Osmo","HS",1,22,0,0.88,0,0,"1e+00","No",0,0
-"WikiPathways","Osmo","Cartilage",1,5,0,0.2,0,0,"1e+00","No",0,0
-"WikiPathways","Dex","HS",5,22,3,4.4,0.68,0.125,"9.96e-01","No",60,13.6
-"WikiPathways","Dex","Cartilage",5,5,1,1,1,0.111,"7.08e-01","No",20,20
-"WikiPathways","HS","Cartilage",22,5,4,4.4,0.91,0.174,"9.09e-01","No",18.2,80
+"KEGG Pathways","Osmo","Dex",4,20,2,0.67,2.97,0.091,"1.31e-01","No",50,10
+"KEGG Pathways","Osmo","HS",4,89,2,2.99,0.67,0.022,"9.51e-01","No",50,2.2
+"KEGG Pathways","Osmo","Cartilage",4,55,1,1.85,0.54,0.017,"9.2e-01","No",25,1.8
+"KEGG Pathways","Dex","HS",20,89,15,14.96,1,0.16,"6.13e-01","No",75,16.9
+"KEGG Pathways","Dex","Cartilage",20,55,8,9.24,0.87,0.119,"8.04e-01","No",40,14.5
+"KEGG Pathways","HS","Cartilage",89,55,32,41.13,0.78,0.286,"1e+00","No",36,58.2
+"GO Biological Process","Osmo","Dex",80,455,55,32.13,1.71,0.115,"7.89e-08","Yes",68.8,12.1
+"GO Biological Process","Osmo","HS",80,757,66,53.45,1.23,0.086,"9.68e-04","Yes",82.5,8.7
+"GO Biological Process","Osmo","Cartilage",80,689,33,48.65,0.68,0.045,"1e+00","No",41.2,4.8
+"GO Biological Process","Dex","HS",455,757,373,304,1.23,0.445,"8.62e-20","Yes",82,49.3
+"GO Biological Process","Dex","Cartilage",455,689,290,276.69,1.05,0.34,"5.58e-02","No",63.7,42.1
+"GO Biological Process","HS","Cartilage",757,689,392,460.35,0.85,0.372,"1e+00","No",51.8,56.9
+"Reactome","Osmo","Dex",11,41,4,3.29,1.22,0.083,"4.28e-01","No",36.4,9.8
+"Reactome","Osmo","HS",11,91,7,7.31,0.96,0.074,"7.11e-01","No",63.6,7.7
+"Reactome","Osmo","Cartilage",11,53,1,4.26,0.23,0.016,"9.96e-01","No",9.1,1.9
+"Reactome","Dex","HS",41,91,29,27.23,1.06,0.282,"3.11e-01","No",70.7,31.9
+"Reactome","Dex","Cartilage",41,53,15,15.86,0.95,0.19,"6.97e-01","No",36.6,28.3
+"Reactome","HS","Cartilage",91,53,23,35.2,0.65,0.19,"1e+00","No",25.3,43.4
+"WikiPathways","Osmo","Dex",1,5,1,0.21,4.8,0.2,"2.08e-01","No",100,20
+"WikiPathways","Osmo","HS",1,21,1,0.88,1.14,0.048,"8.75e-01","No",100,4.8
+"WikiPathways","Osmo","Cartilage",1,5,0,0.21,0,0,"1e+00","No",0,0
+"WikiPathways","Dex","HS",5,21,3,4.38,0.69,0.13,"9.95e-01","No",60,14.3
+"WikiPathways","Dex","Cartilage",5,5,1,1.04,0.96,0.111,"7.26e-01","No",20,20
+"WikiPathways","HS","Cartilage",21,5,4,4.38,0.91,0.182,"9.01e-01","No",19,80

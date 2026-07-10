@@ -114,36 +114,22 @@ nodes_data <- merged %>%
 
 # ENSEMBL gene IDs return more results than MGI symbols
 gene_list <- nodes_data$Row.names
-
-# Define STRING API base URL
-string_api_url <- "https://string-db.org/api"
-output_format <- "json"  # or tsv
-species_id <- 10090  # Mus musculus (mouse)
 ```
 
 
 ```{r prepare_gene_mapping}
 # Create comprehensive gene mapping dictionary
-
-# Create the mapping using your existing data
 gene_mapping <- create_gene_mapping(
   gene_ids = merged$Row.names,
   symbols = nodes_data$symbol
 )
 
 cat("Created mapping for", length(gene_mapping), "genes\n")
-
-# Map STRING preferred names to MGI symbols
 ```
 
 
 ```{r build_string_network}
 # Get protein-protein interactions and enrichment data using STRINGdb
-
-# Function to get protein-protein interactions (edges)
-
-
-# Function to get selected enrichment data
 
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,
@@ -200,10 +186,7 @@ names <- c("Gene", "time_point", "mean", "sd")
 colnames(mean_sd) <- names
 mean_sd <- inner_join(mean_sd, qval_df, by = "Gene")
 save_rds_checked(mean_sd, file = "results/shiny_data/mouse/gloms/gloms_data.rds")
-```
 
-
-```{r compute_amplitude_display_table}
 # Prepare data frame for display
 
 dt <- merged %>%

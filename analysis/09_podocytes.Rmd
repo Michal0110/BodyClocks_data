@@ -116,9 +116,6 @@ nodes_data <- merged %>%
     dplyr::rename(symbol = preferred_symbol)
 
 
-# Get list of gene symbols for STRING API
-#gene_list <- nodes_data$symbol
-
 # ENSEMBL gene IDs return more results than MGI symbols
 gene_list <- nodes_data$Row.names
 
@@ -131,7 +128,6 @@ species_id <- 10090  # Mus musculus (mouse)
 ```{r prepare_gene_mapping}
 # Create comprehensive gene mapping dictionary
 
-# Create the mapping using your existing data
 gene_mapping <- create_gene_mapping(
   gene_ids = merged$Row.names,
   symbols = nodes_data$symbol
@@ -145,11 +141,6 @@ cat("Created mapping for", length(gene_mapping), "genes\n")
 
 ```{r build_string_network}
 # Get protein-protein interactions and enrichment data using STRINGdb
-
-# Function to get protein-protein interactions (edges)
-
-
-# Function to get selected enrichment data
 
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,

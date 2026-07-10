@@ -67,15 +67,6 @@ phase_colors <- c(
 )
 ```
 
-```{r helper_functions}
-# STRING mapping and enrichment helper functions
-
-
-
-
-
-```
-
 ```{r process_tissue}
 process_tissue <- function(raw_data, tissue_name, ensembl_mart, phase_colors) {
 

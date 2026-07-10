@@ -189,23 +189,11 @@ nodes_data <- merged %>%
     filter(BH.Q <= 0.05) %>%
     dplyr::rename(symbol = preferred_symbol)
 
-
-# Get list of gene symbols for STRING API
-#gene_list <- nodes_data$symbol
-
 # ENSEMBL gene IDs return more results than MGI symbols
 gene_list <- nodes_data$CycID
-
-# Define STRING API base URL
-string_api_url <- "https://string-db.org/api"
-output_format <- "json"  # or tsv
-species_id <- 10090  # Mus musculus (mouse)
 ```
 
-```{r define_string_mapping_helpers}
-# Create comprehensive gene mapping dictionary
-
-# Create the mapping using your existing data
+```{r build_wt_string_network}
 gene_mapping <- create_gene_mapping(
   gene_ids = merged$CycID,
   symbols = nodes_data$symbol
@@ -213,11 +201,6 @@ gene_mapping <- create_gene_mapping(
 
 cat("Created mapping for", length(gene_mapping), "genes\n")
 
-
-```
-
-
-```{r build_wt_string_network}
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,
   gene_mapping = gene_mapping,
@@ -258,7 +241,6 @@ save_string_network_outputs(
 
 ```{r build_cartilage_display_table}
 # Process data frame for plotting in bodyclocks shiny app
-# Table for display
 dt_wt <- merged
 dt_ko <- read.csv("results/tables/ko_cartilage_circ.csv")
 

@@ -175,15 +175,6 @@ run_rain_condition <- function(expr_df, n_reps, deltat = 4, period = 24,
   circ
 }
 
-# Build STRING preferred-name → MGI symbol mapping dictionary
-
-```
-
-## STRING network and enrichment functions
-
-```{r string_network_helpers}
-
-
 ```
 
 ## Condition processing function
