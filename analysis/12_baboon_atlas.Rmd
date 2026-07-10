@@ -1,0 +1,402 @@
+---
+title: "GSE98965 baboon transcriptomic atlas - batch processing for BodyClocks"
+output: github_document
+---
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+
+```{r libraries}
+library(dplyr)
+library(tidyr)
+library(rain)
+library(biomaRt)
+library(STRINGdb)
+library(httr)
+library(jsonlite)
+library(ggplot2)
+```
+
+```{r load_data}
+# Load tissue metadata and all 63 CSV files into a named list
+meta <- read.csv("data/meta/baboon_meta.csv")
+
+# Build snake_case tissue names from full tissue labels
+meta$tissue_name <- tolower(gsub("[^A-Za-z0-9]+", "_", meta$tissue))
+meta$tissue_name <- sub("_$", "", meta$tissue_name)  # strip trailing underscore
+
+fix_excel_genes <- function(symbol) {
+  dplyr::case_when(
+    grepl("^\\d{1,2}-Mar$", symbol) ~ paste0("MARCHF", sub("-Mar$", "", symbol)),
+    grepl("^\\d{1,2}-Sep$", symbol) ~ paste0("SEPTIN", sub("-Sep$", "", symbol)),
+    grepl("^\\d{1,2}-Dec$", symbol) ~ paste0("DELEC",  sub("-Dec$", "", symbol)),
+    TRUE ~ symbol
+  )
+}
+
+tissues <- lapply(seq_len(nrow(meta)), function(i) {
+  path <- file.path("data", "raw", "GSE98965_csvs", paste0(meta$acronym[i], ".csv"))
+  if (!file.exists(path)) {
+    message("File not found, skipping: ", path)
+    return(NULL)
+  }
+  read.csv(path) %>% mutate(Symbol = fix_excel_genes(Symbol))
+})
+names(tissues) <- meta$tissue_name
+tissues <- Filter(Negate(is.null), tissues)
+
+cat("Loaded", length(tissues), "tissues\n")
+```
+
+```{r setup}
+# One-time setup: BioMart connection and phase colours
+
+ensembl_mart <- tryCatch(
+  connect_biomart("panubis_gene_ensembl"),
+  error = function(e) {
+    message("BioMart connection failed: ", e$message, "\nWill fall back to REST API per tissue.")
+    NULL
+  }
+)
+
+phase_colors <- c(
+  "0"  = "greenyellow",
+  "2"  = "lightgreen",
+  "4"  = "cyan",
+  "6"  = "skyblue",
+  "8"  = "lightyellow",
+  "10" = "yellow",
+  "12" = "gold",
+  "14" = "orange",
+  "16" = "orangered",
+  "18" = "purple",
+  "20" = "navy",
+  "22" = "darkblue",
+  "24" = "greenyellow"
+)
+```
+
+```{r helper_functions}
+# ------------------------------------------------------------------
+# Ensembl REST API: batch lookup of gene descriptions
+# unname() prevents chunk-index prefixes on returned ENSEMBL IDs
+# ------------------------------------------------------------------
+batch_lookup <- function(ids, size = 500) {
+  chunks  <- split(ids, ceiling(seq_along(ids) / size))
+  results <- lapply(chunks, function(chunk) {
+    res <- POST(
+      "https://rest.ensembl.org/lookup/id",
+      add_headers("Content-Type" = "application/json",
+                  "Accept"       = "application/json"),
+      body   = toJSON(list(ids = chunk)),
+      encode = "raw"
+    )
+    if (status_code(res) != 200) stop("Request failed: ", status_code(res))
+    fromJSON(content(res, "text", encoding = "UTF-8"), flatten = TRUE)
+  })
+  do.call(c, unname(results))
+}
+```
+
+```{r process_tissue}
+process_tissue <- function(raw_data, tissue_name, ensembl_mart, phase_colors) {
+
+  cat("\n========================================\n")
+  cat("Processing:", tissue_name, "\n")
+  cat("========================================\n")
+
+  # --- 1. FPKM filter ---
+  # RNA-seq data: keep genes with mean FPKM >= 0.5 across all timepoints
+  cat("Filtering by FPKM...\n")
+
+  cleaned_data <- raw_data %>% dplyr::select(-Symbol)
+  cleaned_data <- cleaned_data[rowMeans(cleaned_data[, -1]) >= 0.5, ]
+  rownames(cleaned_data) <- cleaned_data$ENSEMBL
+  data <- cleaned_data[, -1]
+
+  cat("Genes after FPKM filter:", nrow(data), "\n")
+
+  # --- 2. RAIN circadian analysis ---
+  cat("Running RAIN analysis...\n")
+
+  RAIN_result <- rain(t(data), deltat = 2, period = 24, nr.series = 1,
+                      peak.border = c(0.3, 0.7), method = "independent",
+                      adjp.method = "ABH", verbose = TRUE)
+
+  RAIN_result$BH.Q    <- p.adjust(RAIN_result$pVal, method = "BH")
+  RAIN_result$ENSEMBL <- rownames(RAIN_result)
+
+  analysed <- merge(cleaned_data, RAIN_result,
+                    by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
+
+  # --- 3. Gene annotation: BioMart primary, REST API fallback ---
+  cat("Fetching gene annotations...\n")
+
+  desc_df <- NULL
+
+  # Try BioMart first
+  if (!is.null(ensembl_mart)) {
+    desc_df <- tryCatch({
+      gene_info <- get_biomart_annotation(
+        ids = analysed$ENSEMBL,
+        mart = ensembl_mart,
+        attributes = c("ensembl_gene_id", "external_gene_name", "description"),
+        filters    = "ensembl_gene_id",
+        cache_key = paste0("baboon_atlas_", tissue_name, "_gene_info")
+      )
+      gene_info$description <- trimws(gsub("\\[.*?\\]", "", gene_info$description))
+      gene_info <- gene_info[!duplicated(gene_info$ensembl_gene_id), ]
+      cat("BioMart annotation retrieved for", nrow(gene_info), "genes\n")
+      data.frame(
+        ENSEMBL     = gene_info$ensembl_gene_id,
+        description = gene_info$description,
+        stringsAsFactors = FALSE
+      )
+    }, error = function(e) {
+      message("BioMart lookup failed: ", e$message, "\nFalling back to Ensembl REST API.")
+      NULL
+    })
+  }
+
+  # Fallback: Ensembl REST API
+  if (is.null(desc_df)) {
+    cat("Fetching gene descriptions from Ensembl REST API...\n")
+    raw_ann <- tryCatch(
+      batch_lookup(analysed$ENSEMBL),
+      error = function(e) {
+        message("REST API lookup also failed: ", e$message)
+        setNames(vector("list", length(analysed$ENSEMBL)), analysed$ENSEMBL)
+      }
+    )
+    desc_df <- data.frame(
+      ENSEMBL     = names(raw_ann),
+      description = trimws(gsub("\\[.*?\\]", "",
+                     sapply(raw_ann, function(x)
+                       if (!is.null(x$description)) x$description else NA_character_))),
+      stringsAsFactors = FALSE
+    )
+  }
+
+  # Symbol column from CSV is primary gene name (100% coverage after Excel fix)
+  merged <- analysed %>%
+    left_join(raw_data %>% dplyr::select(ENSEMBL, Symbol), by = "ENSEMBL") %>%
+    left_join(desc_df, by = "ENSEMBL")
+
+  write.csv(merged, file.path("results", "tables",
+                              paste0(tissue_name, "_circ.csv")), row.names = FALSE)
+
+  # --- 4. STRING network and enrichment ---
+  cat("Building STRING network...\n")
+
+  nodes_data <- merged %>%
+    filter(pVal <= 0.005) %>%
+    dplyr::rename(symbol = Symbol)
+
+  gene_list <- nodes_data$ENSEMBL
+  out_dir   <- file.path("results", "shiny_data", "baboon", tissue_name)
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+  if (length(gene_list) == 0) {
+    cat("WARNING: No significant genes (pVal <= 0.005) for", tissue_name,
+        "- saving empty RDS files\n")
+    for (suffix in c("_nodes", "_nodes_with_tooltips",
+                     "_cluster_for_plot", "_cluster_descriptions")) {
+      save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, suffix, ".rds")))
+    }
+    save_string_edges_by_threshold(
+      empty_string_edges_by_threshold(),
+      output_dir = out_dir,
+      prefix = tissue_name
+    )
+  } else {
+    gene_mapping <- create_gene_mapping(
+      gene_ids   = merged$ENSEMBL,
+      symbols    = nodes_data$symbol,
+      species_id = 9555
+    )
+    cat("Created mapping for", length(gene_mapping), "genes\n")
+
+    network_bundle <- get_string_network_bundle(
+      gene_list = gene_list,
+      gene_mapping = gene_mapping,
+      species_id = 9555,
+      nodes_data = nodes_data
+    )
+    edges <- network_bundle$edges_by_threshold
+    cluster_data <- network_bundle$cluster_data
+
+    cluster_descriptions <- cluster_data %>%
+      dplyr::select(cluster = term, cluster_description = description, category)
+
+    for (i in seq_len(nrow(cluster_data))) {
+      cluster_data$preferredNames[[i]] <- sapply(
+        cluster_data$preferredNames[[i]],
+        function(x) map_to_symbol(x, gene_mapping)
+      )
+    }
+
+    cluster_data <- map_enrichment_genes(cluster_data, gene_mapping)
+
+    cluster_data$preferredNames <- lapply(cluster_data$preferredNames, function(gs) {
+      if (is.character(gs) && length(gs) == 1) {
+        trimws(strsplit(gs, ",")[[1]])
+      } else {
+        gs
+      }
+    })
+
+    reformatted_clusters <- cluster_data %>%
+      dplyr::select(cluster = term, cluster_description = description,
+                    id = preferredNames, category) %>%
+      unnest(id)
+
+    # Phase is already in ZT - no offset correction needed
+    nodes_data2 <- data.frame(
+      id    = nodes_data$symbol,
+      label = nodes_data$symbol,
+      phase = nodes_data$phase %% 24
+    )
+
+    nodes <- nodes_data2 %>%
+      mutate(color = phase_colors[as.character(phase)]) %>%
+      dplyr::select(-phase) %>%
+      left_join(reformatted_clusters, by = "id") %>%
+      group_by(id, label, color) %>%
+      summarize(
+        clusters            = list(unique(cluster)),
+        cluster_description = list(unique(cluster_description)),
+        .groups = "drop"
+      )
+
+    # Get description from merged (REST API) by gene symbol
+    sym_to_desc <- merged %>%
+      dplyr::select(symbol = Symbol, description) %>%
+      filter(!is.na(description) & description != "") %>%
+      distinct(symbol, .keep_all = TRUE)
+
+    merged_nodes <- nodes %>%
+      left_join(sym_to_desc, by = c("label" = "symbol")) %>%
+      filter(!duplicated(label))
+
+    node_tooltips <- nodes %>%
+      rowwise() %>%
+      mutate(
+        cluster_info = list(
+          cluster_descriptions %>%
+            filter(cluster %in% unlist(clusters)) %>%
+            dplyr::select(cluster, cluster_description, category)
+        )
+      ) %>%
+      mutate(
+        enrichment_sections = list(character(0)),
+        enrichment_sections = list(
+          if (length(cluster_info) > 0) {
+            categories <- unique(cluster_info$category)
+            sapply(categories, function(cat) {
+              cat_name <- case_when(
+                cat == "Process"       ~ "GO Biological Process",
+                cat == "KEGG"         ~ "KEGG Pathway",
+                cat == "RCTM"         ~ "Reactome",
+                cat == "WikiPathways" ~ "WikiPathways",
+                TRUE                  ~ cat
+              )
+              cat_terms <- cluster_info %>%
+                filter(category == cat) %>%
+                pull(cluster_description)
+              if (length(cat_terms) > 0) {
+                paste0("<b>", cat_name, ":</b> ", paste(cat_terms, collapse = ", "))
+              } else {
+                character(0)
+              }
+            })
+          } else {
+            character(0)
+          }
+        ),
+        formatted_tooltip = paste(na.omit(unlist(enrichment_sections)), collapse = "<br>")
+      ) %>%
+      dplyr::select(id, formatted_tooltip)
+
+    nodes_with_tooltips <- merged_nodes %>%
+      left_join(node_tooltips, by = "id") %>%
+      mutate(title = paste0(
+        "<b>", label, "</b> - ",
+        ifelse(is.na(description), "", description),
+        ifelse(nchar(formatted_tooltip) > 0,
+               paste0("<br><br>", formatted_tooltip), "")
+      )) %>%
+      dplyr::select(-c(cluster_description, formatted_tooltip, clusters))
+
+    cluster_for_plot <- cluster_data %>%
+      dplyr::select(cluster = term, genes = preferredNames)
+
+    nodes               <- nodes               %>% filter(!is.na(id))
+    nodes_with_tooltips <- nodes_with_tooltips %>% filter(!is.na(id))
+
+    save_rds_checked(nodes,                file = file.path(out_dir, paste0(tissue_name, "_nodes.rds")))
+    save_string_edges_by_threshold(edges, output_dir = out_dir, prefix = tissue_name)
+    save_rds_checked(nodes_with_tooltips,  file = file.path(out_dir, paste0(tissue_name, "_nodes_with_tooltips.rds")))
+    save_rds_checked(cluster_for_plot,     file = file.path(out_dir, paste0(tissue_name, "_cluster_for_plot.rds")))
+    save_rds_checked(cluster_descriptions, file = file.path(out_dir, paste0(tissue_name, "_cluster_descriptions.rds")))
+  }
+
+  # --- 5. Plotting data (ZT00-ZT22, single cycle) ---
+  cat("Preparing plotting data...\n")
+
+  zt_cols        <- sprintf("ZT%02d", seq(0, 22, by = 2))
+  atlas_plotting <- merged[, c("Symbol", zt_cols)]
+  colnames(atlas_plotting) <- c("Gene", as.character(seq(0, 22, by = 2)))
+
+  qval_df <- merged[, c("Symbol", "BH.Q")]
+  colnames(qval_df) <- c("Gene", "BH.Q")
+
+  atlas_plotting_long <- pivot_longer(atlas_plotting, cols = !Gene,
+                                      names_to = "time_point", values_to = "mean")
+  atlas_plotting_long <- inner_join(atlas_plotting_long, qval_df, by = "Gene")
+
+  save_rds_checked(atlas_plotting_long, file = file.path(out_dir, paste0(tissue_name, "_data.rds")))
+
+  # --- 6. Display table ---
+  cat("Preparing display table...\n")
+
+  means       <- merged[, zt_cols]
+  min_val     <- apply(means, 1, min)
+  max_val     <- apply(means, 1, max)
+  Amp_fc_log2 <- log2(max_val / min_val)
+  Amp_fc      <- max_val / min_val
+
+  display_dt <- cbind(merged, Amp_fc_log2, Amp_fc) %>%
+    dplyr::select(Symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+    dplyr::rename(symbol = Symbol) %>%
+    arrange(BH.Q)
+
+  save_rds_checked(display_dt, file = file.path(out_dir, paste0(tissue_name, "_display_dt.rds")))
+
+  cat("Done:", tissue_name, "\n")
+}
+```
+
+```{r batch_process}
+for (tissue_name in names(tissues)) {
+  tryCatch({
+    process_tissue(
+      raw_data     = tissues[[tissue_name]],
+      tissue_name  = tissue_name,
+      ensembl_mart = ensembl_mart,
+      phase_colors = phase_colors
+    )
+  }, error = function(e) {
+    cat("\nERROR processing", tissue_name, ":", e$message, "\n")
+  })
+}
+```

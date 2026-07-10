@@ -1,0 +1,292 @@
+---
+title: "chondrocytes_dexamethasone"
+output: html_document
+date: "2025-05-13"
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+```{r libraries}
+
+library(sva)
+library(dplyr)
+library(tidyr)
+library(DESeq2)
+library(ggplot2)
+library(rain)
+library(biomaRt)
+library(httr)
+library(jsonlite)
+library(STRINGdb)
+library(ComplexHeatmap)
+```
+
+
+```{r load_data}
+
+count_matrix <- read.delim("data/raw/dex_raw.csv", header=T, sep=",", row.names=1)
+
+# remove column dex_24h_b which is an outlier
+count_matrix <- count_matrix %>% dplyr::select(-dex_28h_b)
+
+# The dataset had batch effect so had to remove it before running DESeq2
+batch <- c(rep(1, 12), rep(2, 11), rep(3, 12))
+group <- c(1:12, 1:6, 8:12, 1:12)
+print(group)
+
+adjusted <- ComBat_seq(as.matrix(count_matrix), batch=batch, group=group)
+```
+
+
+```{r deseq2_normalization}
+# DESeq2 processing
+sampletable <- read.table("data/meta/dex_meta.csv", header=T, sep=",", row.names=1)
+
+dds <- DESeqDataSetFromMatrix(countData = adjusted,
+                              colData = sampletable,
+                              design = ~ time)
+
+dds <- dds [rowMeans(counts(dds)) >= 50, ]
+
+dds$condition <- factor(dds$time, levels = c("4h", "8h", "12h", "16h", "20h", "24h", "28h", "32h", "36h", "40h", "44h", "48h"))
+dds1 <- DESeq(dds)
+
+vsd <- vst(dds1, blind=FALSE)
+data_order <- c("4h", "8h", "12h", "16h", "20h", "24h", "28h", "32h", "36h", "40h", "44h", "48h")
+vsd$time <- factor(vsd$time, levels = data_order)
+
+```
+
+
+```{r run_rain_annotate}
+# RAIN circadian analysis
+
+dex <- assay(vsd)
+#dex <- counts(dds1, normalized=TRUE)
+col_names <- c("dex_04h_a", "dex_08h_a", "dex_12h_a", "dex_16h_a", "dex_20h_a", "dex_24h_a", "dex_28h_a", "dex_32h_a", "dex_36h_a", "dex_40h_a", "dex_44h_a", "dex_48h_a", "dex_04h_b", "dex_08h_b", "dex_12h_b", "dex_16h_b", "dex_20h_b", "dex_24h_b", "dex_32h_b", "dex_36h_b", "dex_40h_b", "dex_44h_b", "dex_48h_b", "dex_04h_c", "dex_08h_c", "dex_12h_c", "dex_16h_c", "dex_20h_c", "dex_24h_c", "dex_28h_c", "dex_32h_c", "dex_36h_c", "dex_40h_c", "dex_44h_c", "dex_48h_c")
+colnames(dex) <- col_names
+dex <- dex[, order(colnames(dex))]
+
+dex_RAIN <- rain(t(dex), deltat=4, period=24, measure.sequence = c(3,3,3,3,3,2,3,3,3,3,3,3),
+                peak.border=c(0.3, 0.7), method = "longitudinal" , adjp.method='ABH', verbose=TRUE) # independent for mouse sampling,
+
+p_values_dex <- dex_RAIN$pVal
+
+dex_RAIN$BH.Q <- p.adjust(p_values_dex, method = "BH")
+
+norm_counts <- counts(dds1, normalized=TRUE)
+dex_circ <- merge(norm_counts, dex_RAIN, by = 0, all.x = TRUE)
+
+# Remove .xx from the Row.names column
+dex_circ$Row.names <- gsub("\\..*", "", dex_circ$Row.names)
+
+# Set up the Ensembl BioMart connection
+ensembl <- connect_biomart("mmusculus_gene_ensembl")
+
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = dex_circ$Row.names,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "dexamethasone_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$external_gene_name), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+merged <- merge(dex_circ, gene_info, by.x = "Row.names", by.y = "ensembl_gene_id", all.x = TRUE)
+write.csv(merged, file = "results/tables/dex_circ.csv")
+```
+
+
+```{r prepare_heatmap}
+# Prepare data frame for heatmap
+metadata <- read.csv("data/meta/dex_meta.csv")
+rownames(metadata) <- metadata$sample
+
+dex_05 <- subset(merged, BH.Q <= 0.05)
+dex_05 <- dex_05[order(dex_05$phase),]
+rownames(dex_05) <- dex_05[,1]
+dex_05 <- subset(dex_05, select = -c(Row.names, external_gene_name, description, pVal, phase, peak.shape, period, BH.Q, mgi_symbol, preferred_symbol))
+col_names3 <- c("04h_A2", "08h_A3", "12h_A4", "16h_A5", "20h_A6", "24h_A7", "28h_A8", "32h_A9", "36h_A10", "40h_A11", "44h_A12", "48h_A13", "04h_B2", "08h_B3", "12h_B4", "16h_B5", "20h_B6", "24h_B8", "32h_B9", "36h_B10","40h_B11", "44h_B12","48h_B13", "04h_C2", "08h_C3", "12h_C4", "16h_C5", "20h_C6", "24h_C14", "28h_C8", "32h_C9", "36h_C10", "40h_C11", "44h_C12", "48h_C13")
+colnames(dex_05) <- col_names3
+dex_05 <- dex_05[, order(names(dex_05))]
+df1 <- as.matrix(dex_05)
+scaled_df1 <- t(scale(t(df1)))
+
+chm1 <- Heatmap(scaled_df1, name = "dex bhq 0.05", cluster_columns = FALSE, cluster_rows = FALSE, show_row_names = FALSE)
+
+ensure_dir("results/dexamethasone/plots")
+pdf(file = "results/dexamethasone/plots/heatmap_dex.pdf", width = 10, height = 8)
+draw(chm1)
+dev.off()
+
+ensure_dir("results/publication_figures")
+pdf(file = "results/publication_figures/Fig1B_heatmap_dex.pdf", width = 10, height = 8)
+draw(chm1)
+dev.off()
+png(file = "results/publication_figures/Fig1B_heatmap_dex.png", width = 10, height = 8, units = "in", res = 600)
+draw(chm1)
+dev.off()
+
+```
+
+```{r prepare_string_nodes}
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+
+# Get list of gene symbols for STRING API
+#gene_list <- nodes_data$symbol
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$Row.names
+
+# Define STRING API base URL
+string_api_url <- "https://string-db.org/api"
+output_format <- "json"  # or tsv
+species_id <- 10090  # Mus musculus (mouse)
+```
+
+```{r prepare_gene_mapping}
+# Create comprehensive gene mapping dictionary
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$Row.names,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+
+# Map STRING preferred names to MGI symbols
+```
+
+
+
+```{r build_string_network}
+# Get protein-protein interactions and enrichment data using STRINGdb
+
+# Function to get protein-protein interactions (edges)
+
+
+# Function to get selected enrichment data
+
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = 10090,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+
+phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors)
+
+cluster_data <- network_outputs$cluster_data
+cluster_data_export <- cluster_data %>%
+  dplyr::mutate(preferredNames = vapply(preferredNames, paste, character(1), collapse = ","))
+write.csv(cluster_data_export, file = "results/tables/dex_enrichment.csv", row.names = FALSE)
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/dex",
+  prefix = "dex"
+)
+
+```
+
+```{r prepare_timeseries_data}
+# Process data frame for plotting in bodyclocks shiny app
+df <- subset(merged, select = -c(Row.names, pVal, phase, peak.shape, period, BH.Q, external_gene_name, description, preferred_symbol))
+col_names2 <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12","Gene")
+colnames(df) <- col_names2
+data <- pivot_longer(df, cols = !Gene, names_to = "time_point", values_to = "reads")
+
+qval_df <- merged[c("mgi_symbol", "BH.Q")]
+new_pval_names <- c("Gene", "BH.Q")
+colnames(qval_df) <- new_pval_names
+
+data <- data[order(data$time_point),]
+
+mean_data <- aggregate(reads ~ Gene + time_point, data, mean)
+sd_data <- aggregate(reads ~ Gene + time_point, data, sd)
+mean_sd <- merge(mean_data, sd_data, by = c("Gene", "time_point"))
+names <- c("Gene", "time_point", "mean", "sd")
+colnames(mean_sd) <- names
+mean_sd <- inner_join(mean_sd, qval_df, by = "Gene")
+save_rds_checked(mean_sd, file = "results/shiny_data/mouse/dex/dex_data.rds")
+```
+
+
+```{r compute_amplitude_display_table}
+# Prepare data frame for display
+
+dt <- merged %>%
+  mutate(ZT4 = rowMeans(dplyr::select(., c("dex_4h_a", "dex_28h_a", "dex_4h_b", "dex_4h_c", "dex_28h_c"))),
+         ZT8 = rowMeans(dplyr::select(., c("dex_8h_a", "dex_32h_a", "dex_8h_b", "dex_32h_b", "dex_8h_c", "dex_32h_c"))),
+         ZT12 = rowMeans(dplyr::select(., c("dex_12h_a", "dex_36h_a", "dex_12h_b", "dex_36h_b", "dex_12h_c", "dex_36h_c"))),
+         ZT16 = rowMeans(dplyr::select(., c("dex_16h_a", "dex_40h_a", "dex_16h_b", "dex_40h_b", "dex_16h_c", "dex_40h_c"))),
+         ZT20 = rowMeans(dplyr::select(., c("dex_20h_a", "dex_44h_a", "dex_20h_b", "dex_44h_b", "dex_20h_c", "dex_44h_c"))),
+         ZT24 = rowMeans(dplyr::select(., c("dex_24h_a", "dex_48h_a", "dex_24h_b", "dex_48h_b", "dex_24h_c", "dex_48h_c")))
+  )
+
+means <- dt[c("ZT4", "ZT8", "ZT12", "ZT16", "ZT20", "ZT24")]
+
+min_val <- apply(means, 1, min)
+max_val <- apply(means, 1, max)
+
+Amp_fc_log2 <- log2(max_val / min_val)
+Amp_fc <- max_val / min_val
+
+dt <- cbind(dt, Amp_fc_log2, Amp_fc)
+
+
+display_dt <- dt %>%
+  dplyr::select(mgi_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+  dplyr::rename(symbol = mgi_symbol) %>%
+  arrange(BH.Q)
+
+save_rds_checked(display_dt, file = "results/shiny_data/mouse/dex/dex_display_dt.rds")
+```
+

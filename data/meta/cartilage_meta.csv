@@ -1,0 +1,13 @@
+﻿sample_number,identity,name,tissue,genotype,condition
+01,Cartilage_WT_Run_1,MD01_S25_rawCounts,cartilage,wt,run
+02,Cartilage_WT_Run_2,MD02_S26_rawCounts,cartilage,wt,run
+03,Cartilage_WT_Run_3,MD03_S27_rawCounts,cartilage,wt,run
+04,Cartilage_KO_Run_1,MD04_S28_rawCounts,cartilage,ko,run
+05,Cartilage_KO_Run_2,MD05_S29_rawCounts,cartilage,ko,run
+06,Cartilage_KO_Run_3,MD06_S30_rawCounts,cartilage,ko,run
+07,Cartilage_WT_Ctrl_1,MD07_S31_rawCounts,cartilage,wt,sed
+08,Cartilage_WT_Ctrl_2,MD08_S32_rawCounts,cartilage,wt,sed
+09,Cartilage_WT_Ctrl_3,MD09_S33_rawCounts,cartilage,wt,sed
+10,Cartilage_KO_Ctrl_1,MD10_S34_rawCounts,cartilage,ko,sed
+11,Cartilage_KO_Ctrl_2,MD11_S35_rawCounts,cartilage,ko,sed
+12,Cartilage_KO_Ctrl_3,MD12_S36_rawCounts,cartilage,ko,sed

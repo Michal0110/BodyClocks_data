@@ -1,0 +1,22 @@
+name: bodyclocks_data
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - r-base=4.5.2
+  - r-renv
+  - r-biocmanager
+  - pandoc
+  - gcc_linux-64
+  - gxx_linux-64
+  - libxml2
+  - libxml2-devel
+  - libcurl
+  - openssl
+  - gmp
+  - libuv
+  - zlib
+  - xz
+  - make
+  - pkg-config
+  - git-lfs

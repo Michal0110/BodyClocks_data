@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+title: "BodyClocks Data Processing Pipeline"
+message: "If you use this analysis pipeline, please cite the associated publication and archived Zenodo release."
+type: software
+authors:
+  - family-names: Dudek
+    given-names: Michal
+  - family-names: Meng
+    given-names: Qing-Jun
+version: 1.0.0
+date-released: 2026-07-03
+repository-code: "https://github.com/Michal0110/BodyClocks_data"
+license: MIT

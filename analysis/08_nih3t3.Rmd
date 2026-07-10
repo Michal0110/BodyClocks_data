@@ -1,0 +1,268 @@
+---
+title: "NIH3t3 analysis for bodyclocks"
+output: github_document
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+```{r libraries}
+library(dplyr)
+library(tidyr)
+library(rain)
+library(biomaRt)
+library(STRINGdb)
+library(httr)
+library(jsonlite)
+```
+
+
+```{r load_data}
+nih3t3 <- read.csv("data/raw/NIH3T3_Forskolin.csv")
+
+
+```
+
+
+
+```{r collapse_duplicates}
+duplicates <- nih3t3$ENSEMBL[duplicated(nih3t3$ENSEMBL) | duplicated(nih3t3$ENSEMBL, fromLast = TRUE)]
+duplicates_df <- nih3t3[nih3t3$ENSEMBL %in% duplicates, c("ENSEMBL", "Symbol")]
+
+# Microarray data often has multiple probes for the same gene, so we need to collapse these duplicates. We will keep the probe with the highest mean expression across all timepoints for each gene.
+cleaned_data <- nih3t3 %>%
+  # 1. Calculate the mean expression across all your timepoint columns
+  # (Make sure to exclude your ID/Symbol columns from the math)
+  mutate(mean_expr = rowMeans(dplyr::select(., -ENSEMBL, -Symbol))) %>%
+  
+  # 2. Group the data by the reliable Ensembl ID
+  group_by(ENSEMBL) %>%
+  
+  # 3. For every duplicate, keep ONLY the one with the highest mean expression
+  slice_max(order_by = mean_expr, n = 1, with_ties = FALSE) %>%
+  
+  # 4. Clean up the grouping and drop the temporary math column
+  ungroup() %>%
+  dplyr::select(-mean_expr, -Symbol)
+
+cleaned_data <- as.data.frame(cleaned_data)
+rownames(cleaned_data) <- cleaned_data$ENSEMBL
+data <- cleaned_data[, -1]
+```
+
+
+
+```{r run_rain}
+RAIN <- rain(t(data), deltat=1, period=24, nr.series = 1,
+                peak.border=c(0.3, 0.7), method = "longitudinal", adjp.method='ABH', verbose=TRUE) # independent for mouse sampling, longitudinal can be used for cell culture
+
+p_values <- RAIN$pVal
+
+RAIN$BH.Q <- p.adjust(p_values, method = "BH")
+RAIN$ENSEMBL <- row.names(RAIN)
+
+
+# merge  RAIN  by row names with tendon_filtered  by ensemble ID
+analysed <- merge(cleaned_data, RAIN, by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
+```
+
+
+
+```{r annotate_genes}
+# Set up the Ensembl BioMart connection
+ensembl <- connect_biomart("mmusculus_gene_ensembl")
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = analysed$ENSEMBL,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "nih3t3_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$external_gene_name), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+merged <- merge(analysed, gene_info, by.x = "ENSEMBL", by.y = "ensembl_gene_id", all.x = TRUE)
+
+# remove genes with NA in preferred_symbol (these are genes that had no mapping to MGI symbol or external gene name)
+merged <- merged[!is.na(merged$preferred_symbol), ]
+write.csv(merged, file = "results/tables/nih3t3_circ.csv", row.names = FALSE)
+```
+
+
+
+```{r prepare_string_nodes}
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$ENSEMBL
+
+# Create comprehensive gene mapping dictionary
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$ENSEMBL,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+
+# Map STRING preferred names to MGI symbols
+```
+
+```{r build_string_network}
+# Get protein-protein interactions and enrichment data using STRINGdb
+
+# Function to get protein-protein interactions (edges)
+
+
+# Function to get selected enrichment data
+
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = 10090,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+
+
+phase_colors <- c(
+  "0"  = "greenyellow",   # ZT0/24 - lights on/sunrise
+  "1"  = "#9FF760",       # ZT1
+  "2"  = "lightgreen",    # ZT2 - early morning
+  "3"  = "#48F7C8",       # ZT3
+  "4"  = "cyan",          # ZT4 - late morning
+  "5"  = "#44E7F5",       # ZT5
+  "6"  = "skyblue",       # ZT6 - noon (brightest)
+  "7"  = "#C3E7E6",       # ZT7
+  "8"  = "lightyellow",   # ZT8 - early afternoon
+  "9"  = "#FFFF70",       # ZT9
+  "10" = "yellow",        # ZT10 - late afternoon
+  "11" = "#FFEB00",       # ZT11
+  "12" = "gold",          # ZT12 - dusk/evening
+  "13" = "#FFBE00",       # ZT13
+  "14" = "orange",        # ZT14 - early evening
+  "15" = "#FF7500",       # ZT15
+  "16" = "orangered",     # ZT16 - late evening
+  "17" = "#C02340",       # ZT17
+  "18" = "purple",        # ZT18 - early night
+  "19" = "#400080",       # ZT19
+  "20" = "navy",          # ZT20 - night (darkest)
+  "21" = "#000086",       # ZT21
+  "22" = "darkblue",      # ZT22 - late night
+  "23" = "#57805D",       # ZT23
+  "24" = "greenyellow"    # ZT24 - same as ZT0
+)
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors,
+  phase_shift = -6
+)
+
+cluster_data <- network_outputs$cluster_data
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/nih3t3",
+  prefix = "nih3t3"
+)
+```
+
+
+```{r prepare_timeseries_data}
+# Process data frame for plotting in bodyclocks shiny app
+# Single sample per timepoint (no replicates), raw values stored as "mean" for compatibility
+# Data spans CT20-CT67 (48h), sampled every 2h = 24 timepoints
+
+
+ct_cols <- paste0("X", seq(20, 67, by = 1))
+atlas_plotting <- merged[, c("preferred_symbol", ct_cols)]
+colnames(atlas_plotting) <- c("Gene", as.character(seq(20, 67, by = 1)))
+
+qval_df <- merged[, c("preferred_symbol", "BH.Q")]
+colnames(qval_df) <- c("Gene", "BH.Q")
+
+atlas_plotting_long <- pivot_longer(atlas_plotting, cols = !Gene, names_to = "time_point", values_to = "mean")
+atlas_plotting_long <- inner_join(atlas_plotting_long, qval_df, by = "Gene")
+
+save_rds_checked(atlas_plotting_long, file = "results/shiny_data/mouse/nih3t3/nih3t3_data.rds")
+
+```
+
+
+
+```{r compute_amplitude_display_table}
+# Prepare data frame for display
+# Average matched timepoints across the two 24h cycles:
+# cycle 1 = CT20-CT43, cycle 2 = CT44-CT67 
+
+ct_cycle1 <- paste0("X", seq(20, 43, by = 1))
+ct_cycle2 <- paste0("X", seq(44, 67, by = 1))
+
+dt <- merged
+for (i in seq_along(ct_cycle1)) {
+  dt[[ct_cycle1[i]]] <- rowMeans(merged[, c(ct_cycle1[i], ct_cycle2[i])])
+}
+
+means <- dt[, ct_cycle1]
+
+min_val <- apply(means, 1, min)
+max_val <- apply(means, 1, max)
+
+Amp_fc_log2 <- log2(max_val / min_val)
+Amp_fc <- max_val / min_val
+
+dt <- cbind(dt, Amp_fc_log2, Amp_fc)
+
+display_dt <- dt %>%
+  dplyr::select(preferred_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+  dplyr::rename(symbol = preferred_symbol) %>%
+  arrange(BH.Q)
+
+save_rds_checked(display_dt, file = "results/shiny_data/mouse/nih3t3/nih3t3_display_dt.rds")
+```
+
+
+```{r scratch}
+
+
+```

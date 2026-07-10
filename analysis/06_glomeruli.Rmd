@@ -1,0 +1,235 @@
+---
+title: "glomeruli"
+output: github_document
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+
+## Load libraries
+
+```{r libraries, message=FALSE}
+library(AnnotationDbi)
+library(mouse4302.db)
+library(dplyr)
+library(tidyr)
+library(rain)
+library(genefilter)
+library(httr)
+library(jsonlite)
+library(STRINGdb)
+library(biomaRt)
+```
+
+## Load data
+
+```{r load_data}
+dat <- read.csv("data/raw/gloms_full.csv")
+# remove rows with empty values like ""
+dat <- dat[!apply(dat == "", 1, any), ]
+# set CycID as row names and remove the CycID column
+rownames(dat) <- dat$CycID
+dat <- dat[, -which(names(dat) == "CycID")]
+
+```
+
+
+```{r pressure, echo=FALSE}
+# RAIN circadian analysis
+
+gloms <- dat[, c(18:41)]
+gloms <- gloms %>%
+   dplyr::filter(rowMeans(.) >= 50)
+
+gloms_RAIN <- rain(t(gloms), deltat=4, period=24, measure.sequence = c(2,2,2,2,2,2,2,2,2,2,2,2),
+                peak.border=c(0.3, 0.7), method = "independent" , adjp.method='ABH', verbose=TRUE) # independent for mouse sampling,
+
+p_values_gloms <- gloms_RAIN$pVal
+
+gloms_RAIN$BH.Q <- p.adjust(p_values_gloms, method = "BH")
+
+
+# Adjust phase: first sample is CT3, not CT0
+gloms_RAIN$phase <- (gloms_RAIN$phase + 3) %% 24
+
+gloms_circ <- merge(gloms, gloms_RAIN, by = 0, all.x = TRUE)
+
+# Remove .xx from the Row.names column
+gloms_circ$Row.names <- gsub("\\..*", "", gloms_circ$Row.names)
+
+
+# Set up the Ensembl BioMart connection
+ensembl <- connect_biomart("mmusculus_gene_ensembl")
+
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = gloms_circ$Row.names,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "glomeruli_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$external_gene_name), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+merged <- merge(gloms_circ, gene_info, by.x = "Row.names", by.y = "ensembl_gene_id", all.x = TRUE)
+write.csv(merged, file = "results/tables/gloms_circ.csv")
+```
+
+
+```{r prepare_string_nodes}
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+
+# Get list of gene symbols for STRING API
+#gene_list <- nodes_data$symbol
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$Row.names
+
+# Define STRING API base URL
+string_api_url <- "https://string-db.org/api"
+output_format <- "json"  # or tsv
+species_id <- 10090  # Mus musculus (mouse)
+```
+
+
+```{r prepare_gene_mapping}
+# Create comprehensive gene mapping dictionary
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$Row.names,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+
+# Map STRING preferred names to MGI symbols
+```
+
+
+```{r build_string_network}
+# Get protein-protein interactions and enrichment data using STRINGdb
+
+# Function to get protein-protein interactions (edges)
+
+
+# Function to get selected enrichment data
+
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = 10090,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+
+phase_colors <- c("3" = "orange", "7" = "yellow", "11" = "red", "15" = "purple", "19" = "navy", "23" = "lightblue")
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors)
+
+cluster_data <- network_outputs$cluster_data
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/gloms",
+  prefix = "gloms"
+)
+
+```
+
+
+```{r compute_amplitude_display_table}
+# Process data frame for plotting in bodyclocks shiny app
+df <- subset(merged, select = -c(Row.names, pVal, phase, peak.shape, period, BH.Q, external_gene_name, description, preferred_symbol))
+col_names2 <- c("01", "01", "02", "02", "03", "03", "04", "04", "05", "05", "06", "06", "07", "07", "08", "08", "09", "09", "10", "10", "11", "11", "12", "12","Gene")
+colnames(df) <- col_names2
+data <- pivot_longer(df, cols = !Gene, names_to = "time_point", values_to = "reads")
+
+qval_df <- merged[c("mgi_symbol", "BH.Q")]
+new_pval_names <- c("Gene", "BH.Q")
+colnames(qval_df) <- new_pval_names
+
+data <- data[order(data$time_point),]
+
+mean_data <- aggregate(reads ~ Gene + time_point, data, mean)
+sd_data <- aggregate(reads ~ Gene + time_point, data, sd)
+mean_sd <- merge(mean_data, sd_data, by = c("Gene", "time_point"))
+names <- c("Gene", "time_point", "mean", "sd")
+colnames(mean_sd) <- names
+mean_sd <- inner_join(mean_sd, qval_df, by = "Gene")
+save_rds_checked(mean_sd, file = "results/shiny_data/mouse/gloms/gloms_data.rds")
+```
+
+
+```{r compute_amplitude_display_table}
+# Prepare data frame for display
+
+dt <- merged %>%
+  mutate(ZT3 = rowMeans(dplyr::select(., c("CT3_9am_1", "CT3_9am_2", "CT27_9am_1", "CT27_9am_2"))),
+         ZT7 = rowMeans(dplyr::select(., c("CT7_1pm_1", "CT7_1pm_2", "CT31_1pm_1", "CT31_1pm_2"))),
+         ZT11 = rowMeans(dplyr::select(., c("CT11_5pm_1", "CT11_5pm_2", "CT35_5pm_1", "CT35_5pm_2"))),
+         ZT15 = rowMeans(dplyr::select(., c("CT15_9pm_1", "CT15_9pm_2", "CT39_9pm_1", "CT39_9pm_2"))),
+         ZT19 = rowMeans(dplyr::select(., c("CT19_1am_1", "CT19_1am_2", "CT43_1am_1", "CT43_1am_2"))),
+         ZT23 = rowMeans(dplyr::select(., c("CT23_5am_1", "CT23_5am_2", "CT47_5am_1", "CT47_5am_2")))
+  )
+
+means <- dt[c("ZT3", "ZT7", "ZT11", "ZT15", "ZT19", "ZT23")]
+
+min_val <- apply(means, 1, min)
+max_val <- apply(means, 1, max)
+
+Amp_fc_log2 <- log2(max_val / min_val)
+Amp_fc <- max_val / min_val
+
+dt <- cbind(dt, Amp_fc_log2, Amp_fc)
+
+
+display_dt <- dt %>%
+  dplyr::select(mgi_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+  dplyr::rename(symbol = mgi_symbol) %>%
+  arrange(BH.Q)
+
+save_rds_checked(display_dt, file = "results/shiny_data/mouse/gloms/gloms_display_dt.rds")
+```

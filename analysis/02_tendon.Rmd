@@ -1,0 +1,290 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r load_data_run_rain}
+library(dplyr)
+library(tidyr)
+library(rain)
+
+
+tendon <- read.csv("data/raw/tendon.csv")
+tendon_rain <- tendon[, c(1, 3:26)]
+col_names <- c( "ENSEMBL", "t1r1",
+"t2r1",
+"t3r1",
+"t4r1",
+"t5r1",
+"t6r1",
+"t1r2",
+"t2r2",
+"t3r2",
+"t4r2",
+"t5r2",
+"t6r2",
+"t1r3",
+"t2r3",
+"t3r3",
+"t4r3",
+"t5r3",
+"t6r3",
+"t1r4",
+"t2r4",
+"t3r4",
+"t4r4",
+"t5r4",
+"t6r4"
+)
+tendon_rain <- setNames(tendon_rain, col_names)
+tendon_rain <- tendon_rain[, order(colnames(tendon_rain))]
+duplicates <- tendon_rain$ENSEMBL[duplicated(tendon_rain$ENSEMBL) | duplicated(tendon_rain$ENSEMBL, fromLast = TRUE)]
+duplicates_df <- tendon[tendon$ENSEMBL %in% duplicates, c("ENSEMBL", "Symbol")]
+tendon_rain_filtered <- tendon_rain[!tendon_rain$ENSEMBL %in% duplicates, ]
+
+rownames(tendon_rain_filtered) <- tendon_rain_filtered$ENSEMBL
+tendon_rain_filtered <- tendon_rain_filtered[, -1]
+
+
+
+RAIN <- rain(t(tendon_rain_filtered), deltat=4, period=24, measure.sequence = c(4,4,4,4,4,4),
+                peak.border=c(0.3, 0.7), method = "independent", adjp.method='ABH', verbose=TRUE) # independent for mouse sampling, longitudinal can be used for cell culture
+
+p_values <- RAIN$pVal
+
+RAIN$BH.Q <- p.adjust(p_values, method = "BH")
+RAIN$ENSEMBL <- row.names(RAIN)
+
+tendon_filtered <- tendon[!tendon$ENSEMBL %in% duplicates, ]
+
+# merge  RAIN  by row names with tendon_filtered  by ensemble ID
+analysed <- merge(tendon_filtered, RAIN, by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
+```
+
+
+```{r prepare_timeseries_data}
+# Table for plotting
+df <- subset(analysed, select = -c(ENSEMBL, pVal, phase, peak.shape, period, BH.Q))
+col_names2 <- c("Gene", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12")
+colnames(df) <- col_names2
+data <- pivot_longer(df, cols = !Gene, names_to = "time_point", values_to = "reads")
+
+qval_df <- analysed[c("Symbol", "BH.Q")]
+new_pval_names <- c("Gene", "BH.Q")
+colnames(qval_df) <- new_pval_names
+
+data <- data[order(data$time_point),]
+
+mean_data <- aggregate(reads ~ Gene + time_point, data, mean)
+sd_data <- aggregate(reads ~ Gene + time_point, data, sd)
+mean_sd <- merge(mean_data, sd_data, by = c("Gene", "time_point"))
+names <- c("Gene", "time_point", "mean", "sd")
+colnames(mean_sd) <- names
+mean_sd <- inner_join(mean_sd, qval_df, by = "Gene")
+save_rds_checked(mean_sd, "results/shiny_data/mouse/tendon/tendon_data.rds")
+```
+
+
+
+
+## App RDS processing (from circ_tendon_timecourse_bodyclocks.rmd)
+
+```{r libraries}
+library(sva)
+library(dplyr)
+library(tidyr)
+library(DESeq2)
+library(ggplot2)
+library(rain)
+library(biomaRt)
+library(httr)
+library(jsonlite)
+library(STRINGdb)
+```
+```{r annotate_genes_prepare_string_nodes}
+# Load RAIN output merged with source data.
+data <- analysed
+
+# Set up the Ensembl BioMart connection
+ensembl <- connect_biomart("mmusculus_gene_ensembl")
+
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = data$ENSEMBL,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "tendon_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$preferred_symbol), ]
+gene_info <- gene_info[!duplicated(gene_info$ensembl_gene_id), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+
+merged <- merge(data, gene_info, by.x = "ENSEMBL", by.y = "ensembl_gene_id", all.x = TRUE)
+# If preffered_symbol is NA, copy gene_name to preferred_symbol
+merged$preferred_symbol <- ifelse(is.na(merged$preferred_symbol) | merged$preferred_symbol == "", 
+                                   merged$Symbol, 
+                                   merged$preferred_symbol)
+write.csv(merged, "results/tables/tendon_circ.csv", row.names = FALSE)
+
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$ENSEMBL
+
+# Define STRING API base URL
+string_api_url <- "https://string-db.org/api"
+output_format <- "json"  # or tsv
+species_id <- 10090  # Mus musculus (mouse)
+```
+
+```{r prepare_gene_mapping}
+# Create comprehensive gene mapping dictionary
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$ENSEMBL,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+
+
+```
+
+
+```{r build_string_network}
+# Get protein-protein interactions and enrichment data using STRINGdb
+
+# Function to get protein-protein interactions (edges)
+
+
+# Function to get selected enrichment data
+
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = 10090,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+
+phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors)
+
+cluster_data <- network_outputs$cluster_data
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/tendon",
+  prefix = "tendon"
+)
+
+```
+
+
+```{r compute_amplitude_display_table}
+# Process data frame for plotting in bodyclocks shiny app
+# Table for display
+df <- subset(merged, select = -c(ENSEMBL, Symbol, mgi_symbol, external_gene_name, description, pVal, phase, peak.shape, period, BH.Q))
+col_names2 <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01.1", "02.1", "03.1", "04.1", "05.1", "06.1", "07.1", "08.1", "09.1", "10.1", "11.1", "12.1", "Gene")
+colnames(df) <- col_names2
+
+dt <- df %>%
+  mutate(ZT4 = rowMeans(dplyr::select(., c("01", "07", "01.1", "07.1"))),
+         ZT8 = rowMeans(dplyr::select(., c("02", "08", "02.1", "08.1"))),
+         ZT12 = rowMeans(dplyr::select(., c("03", "09", "03.1", "09.1"))),
+         ZT16 = rowMeans(dplyr::select(., c("04", "10", "04.1", "10.1"))),
+         ZT20 = rowMeans(dplyr::select(., c("05", "11", "05.1", "11.1"))),
+         ZT24 = rowMeans(dplyr::select(., c("06", "12", "06.1", "12.1")))
+  )
+
+means <- dt[c("ZT4", "ZT8", "ZT12", "ZT16", "ZT20", "ZT24")]
+
+min_val <- apply(means, 1, min)
+max_val <- apply(means, 1, max)
+
+Amp_fc_log2 <- max_val - min_val
+Amp_fc <- max_val / min_val
+
+dt <- cbind(merged, Amp_fc_log2, Amp_fc)
+
+display_dt <- dt %>%
+  dplyr::select(preferred_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+  dplyr::rename(symbol = preferred_symbol) %>% #gene names have to be in column labeled symbol
+  arrange(BH.Q)
+
+save_rds_checked(display_dt, "results/shiny_data/mouse/tendon/tendon_display_dt.rds")
+```
+
+
+
+```{r prepare_timeseries_data_full}
+df <- subset(merged, select = -c(ENSEMBL, Symbol, mgi_symbol, external_gene_name, description, pVal, phase, peak.shape, period, BH.Q))
+col_names2 <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "Gene")
+colnames(df) <- col_names2
+data <- pivot_longer(df, cols = !Gene, names_to = "time_point", values_to = "reads")
+
+qval_df <- merged[c("Symbol", "BH.Q")]
+new_pval_names <- c("Gene", "BH.Q")
+colnames(qval_df) <- new_pval_names
+
+data <- data[order(data$time_point),]
+
+mean_data <- aggregate(reads ~ Gene + time_point, data, mean)
+sd_data <- aggregate(reads ~ Gene + time_point, data, sd)
+mean_sd <- merge(mean_data, sd_data, by = c("Gene", "time_point"))
+names <- c("Gene", "time_point", "mean", "sd")
+colnames(mean_sd) <- names
+mean_sd <- inner_join(mean_sd, qval_df, by = "Gene")
+save_rds_checked(mean_sd, "results/shiny_data/mouse/tendon/tendon_data.rds")
+```

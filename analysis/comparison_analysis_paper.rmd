@@ -1,0 +1,943 @@
+---
+title: "Chondrocyte comparison analysis"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+```
+
+```{r load_libraries, message=FALSE, warning=FALSE}
+library(dplyr)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(circular)
+library(patchwork)
+library(tidyr)
+library(tibble)
+library(ggrepel)
+library(forcats)
+```
+
+```{r load_data}
+# ── Read circadian tables ────────────────────────────────────────────────────
+osmo_data      <- read.csv("results/tables/osmo_circ.csv")
+dex_data       <- read.csv("results/tables/dex_circ.csv")
+hs_data        <- read.csv("results/tables/hs_circ.csv")
+cartilage_data <- read.csv("results/tables/wt_cartilage_circ.csv")
+
+# Standardise cartilage column names to match chondrocyte datasets
+cartilage_data <- cartilage_data %>%
+  dplyr::rename(Row.names = CycID)
+
+# ── Filter to rhythmic genes ─────────────────────────────────────────────────
+osmo_trimmed      <- osmo_data      %>% filter(BH.Q < 0.05)
+dex_trimmed       <- dex_data       %>% filter(BH.Q < 0.05)
+hs_trimmed        <- hs_data        %>% filter(BH.Q < 0.05)
+cartilage_trimmed <- cartilage_data %>% filter(BH.Q < 0.05)
+
+cat("Rhythmic genes (BH.Q < 0.05):\n")
+cat("  Osmo:      ", nrow(osmo_trimmed), "\n")
+cat("  Dex:       ", nrow(dex_trimmed), "\n")
+cat("  HS:        ", nrow(hs_trimmed), "\n")
+cat("  Cartilage: ", nrow(cartilage_trimmed), "\n")
+
+# ── Load RDS time-series data for expression plots ───────────────────────────
+hs_plot        <- readRDS("results/shiny_data/mouse/hs/hs_data.rds")
+osmo_plot      <- readRDS("results/shiny_data/mouse/osmo/osmo_data.rds")
+dex_plot       <- readRDS("results/shiny_data/mouse/dex/dex_data.rds")
+cartilage_plot <- readRDS("results/shiny_data/mouse/cartilage_circ/cartilage_wt_data.rds")
+
+dataset_list <- list(
+  HS        = hs_plot,
+  Osmo      = osmo_plot,
+  Dex       = dex_plot,
+  cartilage = cartilage_plot
+)
+
+# ── Output directory ─────────────────────────────────────────────────────────
+dir.create("results/publication_figures", recursive = TRUE, showWarnings = FALSE)
+```
+
+```{r helper_functions}
+# ── Helper: multi-dataset expression time-series plot ───────────────────────
+multi_dataset_plot <- function(data_list, gene, show_line = TRUE, legend = TRUE) {
+  filtered_list <- lapply(names(data_list), function(dataset_name) {
+    data_list[[dataset_name]] %>%
+      filter(Gene == gene) %>%
+      mutate(dataset = dataset_name)
+  })
+  combined_data <- bind_rows(filtered_list)
+  if (nrow(combined_data) == 0) {
+    cat("Gene not found in any dataset:", gene, "\n")
+    return(NULL)
+  }
+  p <- ggplot(combined_data, aes(x = as.numeric(time_point), y = mean, color = dataset)) +
+    theme_classic() +
+    theme(
+      plot.title   = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.text.x  = element_text(size = 10, face = "bold"),
+      axis.text.y  = element_text(size = 10, face = "bold"),
+      legend.position = if (legend) "bottom" else "none",
+      legend.title = element_blank()
+    ) +
+    labs(x = "Circadian Time", y = "Expression", title = gene) +
+    geom_vline(xintercept = 6,  linetype = "dashed", color = "grey", alpha = 0.5) +
+    geom_vline(xintercept = 12, linetype = "dashed", color = "grey", alpha = 0.5) +
+    geom_point(size = 2) +
+    geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.2, alpha = 0.7)
+  if (show_line) p <- p + geom_line(linewidth = 0.75)
+  time_breaks <- sort(unique(as.numeric(combined_data$time_point)))
+  n_breaks    <- length(time_breaks)
+  ct_values   <- seq(4, by = 4, length.out = n_breaks)
+  ct_labels   <- ifelse(seq_len(n_breaks) %% 2 == 1, ct_values, "")
+  p + scale_x_continuous(breaks = time_breaks, labels = ct_labels)
+}
+
+plot_multiple_genes <- function(data_list, genes, show_line = TRUE) {
+  plots <- lapply(genes, function(gene) multi_dataset_plot(data_list, gene, show_line))
+  wrap_plots(plots, ncol = 3)
+}
+
+# ── Helper: phase distribution rose plot ────────────────────────────────────
+create_rose_plot <- function(data, dataset_name) {
+  dataset_data <- data %>% filter(dataset == dataset_name)
+  all_phases   <- data.frame(phase_circular = c(0, 4, 8, 12, 16, 20))
+  dataset_data <- all_phases %>%
+    left_join(dataset_data, by = "phase_circular") %>%
+    mutate(count = ifelse(is.na(count), 0, count),
+           phase_plot = phase_circular + 2)
+  ggplot(dataset_data, aes(x = phase_plot, y = count)) +
+    geom_bar(stat = "identity", fill = "steelblue", alpha = 0.7,
+             color = "black", width = 3) +
+    coord_polar(start = -pi/6, direction = 1) +
+    scale_x_continuous(
+      breaks = c(2, 6, 10, 14, 18, 22),
+      labels = c("CT0/24", "CT4", "CT8", "CT12", "CT16", "CT20"),
+      limits = c(0, 24)
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title  = element_text(size = 14, face = "bold", hjust = 0.5),
+      axis.text.x = element_text(size = 10, face = "bold"),
+      axis.text.y = element_text(size = 8),
+      panel.grid.major = element_line(color = "gray80", linewidth = 0.5),
+      panel.grid.minor = element_blank()
+    ) +
+    labs(title    = dataset_name,
+         subtitle = sprintf("n = %d rhythmic genes", sum(dataset_data$count)),
+         x = NULL, y = "Number of Genes")
+}
+
+# ── Helper: pairwise overlap with pair-specific universe ─────────────────────
+hypergeometric_test_pairwise_universe <- function(list1, list2, universe) {
+  universe      <- unique(universe)
+  original_size1 <- length(unique(list1))
+  original_size2 <- length(unique(list2))
+  list1 <- intersect(unique(list1), universe)
+  list2 <- intersect(unique(list2), universe)
+  overlap      <- length(intersect(list1, list2))
+  size1        <- length(list1)
+  size2        <- length(list2)
+  genome_size  <- length(universe)
+  expected     <- (size1 * size2) / genome_size
+  fold_enrichment <- ifelse(expected > 0, overlap / expected, NA_real_)
+  jaccard      <- ifelse(length(union(list1, list2)) > 0,
+                         overlap / length(union(list1, list2)), NA_real_)
+  p_value <- phyper(overlap - 1, size1, genome_size - size1, size2, lower.tail = FALSE)
+  list(universe_size = genome_size,
+       original_size1 = original_size1, original_size2 = original_size2,
+       overlap = overlap, size1 = size1, size2 = size2,
+       expected = expected, fold_enrichment = fold_enrichment,
+       jaccard = jaccard, p_value = p_value)
+}
+
+# ── Helper: clock-relative phase computation ─────────────────────────────────
+get_phase_by_symbol <- function(data, gene_symbol,
+                                symbol_col = "mgi_symbol", phase_col = "phase") {
+  row <- data %>% filter(!!sym(symbol_col) == gene_symbol)
+  if (nrow(row) == 0) return(NA)
+  row[[phase_col]][1]
+}
+
+compute_clock_relative_phase <- function(data, ref_phase,
+                                         symbol_col = "mgi_symbol",
+                                         phase_col  = "phase") {
+  data %>% mutate(
+    clock_relative_phase = (!!sym(phase_col) - ref_phase) %% 24,
+    clock_relative_phase = ifelse(clock_relative_phase > 12,
+                                  clock_relative_phase - 24,
+                                  clock_relative_phase)
+  )
+}
+
+circ_dist_24 <- function(a, b) {
+  d <- abs(a - b) %% 24
+  ifelse(d > 12, 24 - d, d)
+}
+
+# ── Helper: enrichment term overlap ─────────────────────────────────────────
+compare_enrichment_overlap <- function(enrich1, enrich2, name1, name2,
+                                       category_filter, universe_size) {
+  e1 <- enrich1 %>% filter(category == category_filter)
+  e2 <- enrich2 %>% filter(category == category_filter)
+  if (nrow(e1) == 0 || nrow(e2) == 0)
+    return(list(overlap = 0, size1 = nrow(e1), size2 = nrow(e2),
+                overlap_terms = character(0), p_value = 1, fold_enrichment = 0,
+                jaccard = 0, expected = 0, dataset1 = name1, dataset2 = name2,
+                category = category_filter))
+  terms1         <- e1$description
+  terms2         <- e2$description
+  overlap_terms  <- intersect(terms1, terms2)
+  overlap_count  <- length(overlap_terms)
+  size1          <- length(terms1)
+  size2          <- length(terms2)
+  expected       <- (size1 * size2) / universe_size
+  fold_enrichment <- ifelse(expected > 0, overlap_count / expected, 0)
+  p_value        <- phyper(overlap_count - 1, size1, universe_size - size1,
+                           size2, lower.tail = FALSE)
+  list(dataset1 = name1, dataset2 = name2, category = category_filter,
+       size1 = size1, size2 = size2, overlap = overlap_count,
+       expected = expected, fold_enrichment = fold_enrichment,
+       jaccard = overlap_count / length(union(terms1, terms2)),
+       p_value = p_value, overlap_terms = overlap_terms)
+}
+
+# ── Helper: enrichment tile heatmap ─────────────────────────────────────────
+make_tile_heatmap <- function(data, cat) {
+  all_terms    <- data %>% filter(category_label == cat) %>% pull(description) %>% unique()
+  all_datasets <- c("Osmo", "Dex", "HS", "Cartilage")
+  full_grid    <- expand.grid(description = all_terms, dataset = all_datasets,
+                              stringsAsFactors = FALSE)
+  d <- data %>%
+    filter(category_label == cat) %>%
+    dplyr::select(description, dataset, neg_log10_fdr, number_of_genes)
+  merged <- full_grid %>%
+    left_join(d, by = c("description", "dataset")) %>%
+    mutate(dataset     = factor(dataset, levels = all_datasets),
+           description = fct_reorder(description, neg_log10_fdr,
+                                     .fun = function(x) max(x, na.rm = TRUE)))
+  ggplot(merged, aes(x = dataset, y = description, fill = neg_log10_fdr)) +
+    geom_tile(colour = "white", linewidth = 0.4) +
+    geom_text(aes(label = ifelse(!is.na(number_of_genes),
+                                 as.character(number_of_genes), "")),
+              size = 3, colour = "white", fontface = "bold") +
+    scale_fill_gradient(low = "#fdcc8a", high = "#b30000", na.value = "grey90",
+                        name = "-log10(FDR)") +
+    theme_minimal(base_size = 11) +
+    theme(axis.text.x = element_text(angle = 35, hjust = 1),
+          axis.text.y = element_text(size = 9),
+          plot.title  = element_text(face = "bold", size = 11),
+          panel.grid  = element_blank()) +
+    labs(title = cat, x = NULL, y = NULL,
+         caption = "Number in cell = gene count; grey = not significant")
+}
+
+# ── Helper: enrichment bar chart ─────────────────────────────────────────────
+make_bar_chart <- function(data, cat, dataset_colors) {
+  d <- data %>%
+    filter(category_label == cat) %>%
+    mutate(description = fct_reorder(description, neg_log10_fdr))
+  ggplot(d, aes(x = neg_log10_fdr, y = description, fill = dataset)) +
+    geom_col(position = position_dodge(width = 0.7), width = 0.65, alpha = 0.9) +
+    geom_vline(xintercept = -log10(0.05), linetype = "dashed",
+               colour = "grey40", linewidth = 0.4) +
+    scale_fill_manual(values = dataset_colors, name = "Dataset") +
+    theme_classic(base_size = 11) +
+    theme(axis.text.y = element_text(size = 9),
+          plot.title  = element_text(face = "bold", size = 11),
+          legend.position = "right") +
+    labs(title = cat, x = "-log10(FDR)", y = NULL,
+         caption = "Dashed line = FDR 0.05 | Top 5 terms per dataset")
+}
+```
+
+```{r Fig1C_overlapping_genes}
+# ── 3-way stress overlap (by Ensembl ID) ────────────────────────────────────
+stress_overlap_genes <- Reduce(intersect, list(
+  osmo_trimmed$Row.names,
+  dex_trimmed$Row.names,
+  hs_trimmed$Row.names
+))
+
+cat("3-way stress overlap: ", length(stress_overlap_genes), " genes\n")
+
+# Extract those genes from cartilage (needed for CRP section later)
+cartilage_overlapping <- cartilage_trimmed %>%
+  filter(Row.names %in% stress_overlap_genes)
+
+# ── Priority-ordered gene list for plotting ──────────────────────────────────
+priority_genes <- c("Bmal1", "Npas2", "Cry1", "Nr1d1", "Per1", "Per2", "Per3", "Dbp", "Tef")
+overlap_genes  <- unique(na.omit(cartilage_overlapping$mgi_symbol))
+ordered_genes  <- c(
+  priority_genes[priority_genes %in% overlap_genes],
+  sort(setdiff(overlap_genes, priority_genes))
+)
+
+p_overlapping <- plot_multiple_genes(dataset_list, ordered_genes, show_line = TRUE)
+p_overlapping
+
+ggsave("results/publication_figures/Fig1C_overlapping_genes.pdf",
+       plot = p_overlapping, width = 9, height = 13)
+ggsave("results/publication_figures/Fig1C_overlapping_genes.png",
+       plot = p_overlapping, width = 9, height = 13)
+```
+
+```{r Fig2A_rose_plots_combined}
+# ── Phase distribution data ──────────────────────────────────────────────────
+phase_distribution_data <- bind_rows(
+  osmo_trimmed      %>% mutate(dataset = "Osmotic Stress") %>% dplyr::select(phase, dataset),
+  dex_trimmed       %>% mutate(dataset = "Dexamethasone")  %>% dplyr::select(phase, dataset),
+  hs_trimmed        %>% mutate(dataset = "Heat Shock")     %>% dplyr::select(phase, dataset),
+  cartilage_trimmed %>% mutate(dataset = "Cartilage")      %>% dplyr::select(phase, dataset)
+) %>%
+  mutate(phase_circular = ifelse(phase == 24, 0, phase))
+
+phase_counts <- phase_distribution_data %>%
+  group_by(dataset, phase_circular) %>%
+  summarise(count = n(), .groups = "drop")
+
+p_rose_osmo      <- create_rose_plot(phase_counts, "Osmotic Stress")
+p_rose_dex       <- create_rose_plot(phase_counts, "Dexamethasone")
+p_rose_hs        <- create_rose_plot(phase_counts, "Heat Shock")
+p_rose_cartilage <- create_rose_plot(phase_counts, "Cartilage")
+
+p_rose_combined <- (p_rose_osmo | p_rose_dex) / (p_rose_hs | p_rose_cartilage)
+p_rose_combined
+
+ggsave("results/publication_figures/Fig2A_rose_plots_combined.pdf",
+       plot = p_rose_combined, width = 10, height = 10)
+ggsave("results/publication_figures/Fig2A_rose_plots_combined.png",
+       plot = p_rose_combined, width = 8, height = 8, dpi = 600)
+```
+
+```{r pairwise_overlap_supp_table2}
+# ── Full tested gene sets (universe per pair = intersection) ─────────────────
+gene_universes <- list(
+  Osmo      = osmo_data$Row.names,
+  Dex       = dex_data$Row.names,
+  HS        = hs_data$Row.names,
+  Cartilage = cartilage_data$Row.names
+)
+
+gene_lists <- list(
+  Osmo      = osmo_trimmed$Row.names,
+  Dex       = dex_trimmed$Row.names,
+  HS        = hs_trimmed$Row.names,
+  Cartilage = cartilage_trimmed$Row.names
+)
+
+dataset_names <- names(gene_lists)
+n_datasets    <- length(dataset_names)
+
+run_pairwise_overlap <- function(gene_lists, gene_universes, bhq_label) {
+  results <- data.frame()
+  ds_names <- names(gene_lists)
+  for (i in 1:(length(ds_names) - 1)) {
+    for (j in (i + 1):length(ds_names)) {
+      name1        <- ds_names[i]
+      name2        <- ds_names[j]
+      pair_universe <- intersect(gene_universes[[name1]], gene_universes[[name2]])
+      res          <- hypergeometric_test_pairwise_universe(
+        gene_lists[[name1]], gene_lists[[name2]], pair_universe)
+      results <- rbind(results, data.frame(
+        Dataset1        = name1,
+        Dataset2        = name2,
+        Universe_Size   = res$universe_size,
+        Size1           = res$size1,
+        Size2           = res$size2,
+        Overlap         = res$overlap,
+        Expected        = round(res$expected, 2),
+        Fold_Enrichment = round(res$fold_enrichment, 2),
+        Jaccard_Index   = round(res$jaccard, 3),
+        P_value         = format(res$p_value, scientific = TRUE, digits = 3),
+        Significant     = ifelse(res$p_value < 0.05, "Yes", "No"),
+        BH.Q.cut.off    = bhq_label,
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+  results
+}
+
+results_05 <- run_pairwise_overlap(gene_lists, gene_universes, "0.05")
+
+gene_lists_01 <- list(
+  Osmo      = osmo_data      %>% filter(BH.Q <= 0.01) %>% pull(Row.names),
+  Dex       = dex_data       %>% filter(BH.Q <= 0.01) %>% pull(Row.names),
+  HS        = hs_data        %>% filter(BH.Q <= 0.01) %>% pull(Row.names),
+  Cartilage = cartilage_data %>% filter(BH.Q <= 0.01) %>% pull(Row.names)
+)
+results_01 <- run_pairwise_overlap(gene_lists_01, gene_universes, "0.01")
+
+pairwise_universe_results <- results_05  # used downstream
+
+supp2 <- bind_rows(results_05, results_01) %>%
+  dplyr::rename(`BH.Q cut-off` = BH.Q.cut.off)
+
+write.csv(supp2,
+          "results/publication_figures/Supplementary_table_2.csv",
+          row.names = FALSE)
+cat("Supplementary_table_2.csv saved.\n")
+print(results_05)
+```
+
+```{r Fig1D_jaccard_4way_comparison}
+# ── Build symmetric 4x4 Jaccard matrix ──────────────────────────────────────
+jaccard_mat <- matrix(1, nrow = n_datasets, ncol = n_datasets,
+                      dimnames = list(dataset_names, dataset_names))
+
+for (k in seq_len(nrow(pairwise_universe_results))) {
+  n1 <- as.character(pairwise_universe_results$Dataset1[k])
+  n2 <- as.character(pairwise_universe_results$Dataset2[k])
+  j  <- as.numeric(pairwise_universe_results$Jaccard_Index[k])
+  jaccard_mat[n1, n2] <- j
+  jaccard_mat[n2, n1] <- j
+}
+
+p_jaccard <- pheatmap(
+  jaccard_mat,
+  display_numbers  = TRUE,
+  number_format    = "%.3f",
+  cluster_rows     = FALSE,
+  cluster_cols     = FALSE,
+  color            = colorRampPalette(c("white", "orange", "red"))(100),
+  main             = "Jaccard similarity of rhythmic gene sets (BH.Q < 0.05)\nPair-specific universe",
+  fontsize_number  = 12,
+  fontsize         = 12
+)
+
+ggsave("results/publication_figures/Fig1D_jaccard_4way_comparison.pdf",
+       plot = p_jaccard, width = 6, height = 5)
+ggsave("results/publication_figures/Fig1D_jaccard_4way_comparison.png",
+       plot = p_jaccard, width = 6, height = 5, dpi = 300)
+```
+
+```{r crp_setup}
+# ── Core clock gene set ──────────────────────────────────────────────────────
+core_clock_genes <- c("Bmal1", "Clock", "Per1", "Per2", "Per3",
+                      "Cry1", "Cry2", "Nr1d1", "Nr1d2", "Dbp", "Tef", "Npas2")
+
+datasets <- list(
+  Osmo      = osmo_trimmed,
+  Dex       = dex_trimmed,
+  HS        = hs_trimmed,
+  Cartilage = cartilage_trimmed
+)
+
+# ── Supplementary Table 3: core clock gene absolute phases ───────────────────
+clock_phases <- data.frame()
+for (ds_name in names(datasets)) {
+  ds <- datasets[[ds_name]]
+  for (gene in core_clock_genes) {
+    ph <- get_phase_by_symbol(ds, gene)
+    clock_phases <- rbind(clock_phases, data.frame(
+      dataset = ds_name, gene = gene, phase = ph,
+      stringsAsFactors = FALSE
+    ))
+  }
+}
+
+clock_wide <- clock_phases %>%
+  pivot_wider(names_from = dataset, values_from = phase)
+
+cat("=== CORE CLOCK GENE PHASES ===\n")
+print(clock_wide)
+
+write.csv(clock_wide,
+          "results/publication_figures/Supplementary_table_3.csv",
+          row.names = FALSE)
+
+# ── Compute clock-relative phases (CRP) for all datasets ────────────────────
+ref_gene   <- "Bmal1"
+ref_phases <- clock_phases %>%
+  filter(gene == ref_gene) %>%
+  dplyr::select(dataset, ref_phase = phase)
+
+cat("\n=== Bmal1 reference phases ===\n")
+print(ref_phases)
+
+for (ds_name in names(datasets)) {
+  ref_ph <- ref_phases$ref_phase[ref_phases$dataset == ds_name]
+  if (length(ref_ph) == 0 || is.na(ref_ph)) {
+    warning(ref_gene, " not found in ", ds_name, " – skipping CRP computation")
+    next
+  }
+  datasets[[ds_name]] <- compute_clock_relative_phase(datasets[[ds_name]], ref_ph)
+}
+
+# ── Build CRP data for 3-way stress overlap genes ────────────────────────────
+stress_overlap_genes_symbols <- datasets[["Osmo"]] %>%
+  filter(Row.names %in% stress_overlap_genes) %>%
+  pull(mgi_symbol) %>%
+  na.omit() %>%
+  unique()
+
+cat(sprintf("\nAnalysing %d genes common to all 3 stress datasets\n",
+            length(stress_overlap_genes_symbols)))
+
+stress_ds_names <- c("Osmo", "Dex", "HS")
+crp_data <- data.frame()
+
+for (ds_name in stress_ds_names) {
+  ds <- datasets[[ds_name]]
+  for (gene_sym in stress_overlap_genes_symbols) {
+    row <- ds %>% filter(mgi_symbol == gene_sym)
+    if (nrow(row) > 0 && !is.na(row$clock_relative_phase[1])) {
+      crp_data <- rbind(crp_data, data.frame(
+        gene                 = gene_sym,
+        dataset              = ds_name,
+        absolute_phase       = row$phase[1],
+        clock_relative_phase = row$clock_relative_phase[1],
+        stringsAsFactors     = FALSE
+      ))
+    }
+  }
+}
+
+# ── CRP consistency ──────────────────────────────────────────────────────────
+consistency_threshold <- 0.75
+
+crp_consistency <- crp_data %>%
+  group_by(gene) %>%
+  summarise(
+    n_datasets  = n(),
+    mean_crp    = mean(clock_relative_phase),
+    sd_crp      = sd(clock_relative_phase),
+    range_crp   = max(clock_relative_phase) - min(clock_relative_phase),
+    circ_sd_crp = {
+      vals <- circular(clock_relative_phase, units = "hours", template = "none")
+      rho  <- min(rho.circular(vals), 1.0)
+      as.numeric(sqrt(-2 * log(rho)))
+    },
+    phases     = paste(sprintf("%s:%s",   dataset, absolute_phase),       collapse = ", "),
+    crp_values = paste(sprintf("%s:%.1f", dataset, clock_relative_phase), collapse = ", "),
+    .groups = "drop"
+  ) %>%
+  filter(n_datasets >= 2) %>%
+  arrange(circ_sd_crp) %>%
+  mutate(
+    classification = ifelse(circ_sd_crp <= consistency_threshold,
+                            "Clock-controlled", "Variable"),
+    is_core_clock  = gene %in% core_clock_genes
+  )
+
+cat(sprintf("\nClock-controlled: %d  |  Variable: %d\n",
+            sum(crp_consistency$classification == "Clock-controlled"),
+            sum(crp_consistency$classification == "Variable")))
+
+# ── Supplementary Table 1 ────────────────────────────────────────────────────
+write.csv(crp_consistency,
+          "results/publication_figures/Supplementary_table_1.csv",
+          row.names = FALSE)
+cat("Supplementary_table_1.csv saved.\n")
+```
+
+```{r Fig2E_clock_relative_phase_heatmap}
+consistent_genes <- crp_consistency %>%
+  filter(classification == "Clock-controlled") %>%
+  arrange(mean_crp) %>%
+  pull(gene)
+
+if (length(consistent_genes) > 0) {
+  heatmap_data <- crp_data %>%
+    filter(gene %in% consistent_genes) %>%
+    dplyr::select(gene, dataset, clock_relative_phase) %>%
+    pivot_wider(names_from = dataset, values_from = clock_relative_phase) %>%
+    column_to_rownames("gene")
+
+  gene_order   <- crp_consistency %>%
+    filter(gene %in% consistent_genes) %>%
+    arrange(mean_crp) %>%
+    pull(gene)
+  heatmap_data <- heatmap_data[gene_order, , drop = FALSE]
+  heatmap_mat  <- as.matrix(heatmap_data)
+
+  p_crp_heatmap <- pheatmap(
+    heatmap_mat,
+    cluster_rows     = FALSE,
+    cluster_cols     = FALSE,
+    color            = colorRampPalette(c("blue", "white", "red"))(100),
+    breaks           = seq(-12, 12, length.out = 101),
+    main             = sprintf(
+      "Clock-relative phases: consistent genes (n=%d)\nHours from Bmal1 peak",
+      length(consistent_genes)),
+    fontsize_row     = ifelse(length(consistent_genes) > 40, 6, 8),
+    show_rownames    = length(consistent_genes) <= 60,
+    fontsize         = 10
+  )
+
+  fig_h <- max(4, length(consistent_genes) * 0.15 + 2)
+  ggsave("results/publication_figures/Fig2E_clock_relative_phase_heatmap.pdf",
+         plot = p_crp_heatmap, width = 6, height = fig_h)
+  ggsave("results/publication_figures/Fig2E_clock_relative_phase_heatmap.png",
+         plot = p_crp_heatmap, width = 6, height = fig_h, dpi = 300)
+}
+```
+
+```{r crp_pairwise}
+circ_dist_threshold <- 4  # hours
+
+ds_pairs <- list(
+  c("Osmo", "Dex"),
+  c("Osmo", "HS"),
+  c("Osmo", "Cartilage"),
+  c("Dex",  "HS"),
+  c("Dex",  "Cartilage"),
+  c("HS",   "Cartilage")
+)
+
+pairwise_crp_results <- list()
+pairwise_summary     <- data.frame()
+
+for (pair in ds_pairs) {
+  d1    <- pair[1];  d2 <- pair[2]
+  label <- paste(d1, d2, sep = "_vs_")
+
+  shared_ids <- intersect(datasets[[d1]]$Row.names, datasets[[d2]]$Row.names)
+
+  df1 <- datasets[[d1]] %>%
+    filter(Row.names %in% shared_ids) %>%
+    dplyr::select(gene = mgi_symbol, id = Row.names,
+                  crp_1 = clock_relative_phase, abs_1 = phase) %>%
+    mutate(dataset1 = d1)
+
+  df2 <- datasets[[d2]] %>%
+    filter(Row.names %in% shared_ids) %>%
+    dplyr::select(id = Row.names, crp_2 = clock_relative_phase, abs_2 = phase) %>%
+    mutate(dataset2 = d2)
+
+  merged <- inner_join(df1, df2, by = "id") %>%
+    filter(!is.na(crp_1), !is.na(crp_2)) %>%
+    mutate(circ_dist      = circ_dist_24(crp_1, crp_2),
+           classification = ifelse(circ_dist <= circ_dist_threshold,
+                                   "Clock-controlled", "Variable"))
+
+  n_total      <- nrow(merged)
+  n_controlled <- sum(merged$classification == "Clock-controlled")
+  pct          <- 100 * n_controlled / n_total
+
+  pairwise_crp_results[[label]] <- merged
+  pairwise_summary <- rbind(pairwise_summary, data.frame(
+    pair                 = label,
+    dataset1             = d1,
+    dataset2             = d2,
+    n_shared_genes       = n_total,
+    n_clock_controlled   = n_controlled,
+    pct_clock_controlled = round(pct, 1),
+    threshold_h          = circ_dist_threshold,
+    stringsAsFactors     = FALSE
+  ))
+}
+
+# ── Permutation tests ────────────────────────────────────────────────────────
+set.seed(42)
+n_perm     <- 1000
+stat_results <- data.frame()
+
+for (pair in ds_pairs) {
+  d1    <- pair[1];  d2 <- pair[2]
+  label <- paste(d1, d2, sep = "_vs_")
+  df    <- pairwise_crp_results[[label]]
+  n_genes  <- nrow(df)
+  obs_pct  <- 100 * sum(df$classification == "Clock-controlled") / n_genes
+
+  perm_pcts <- replicate(n_perm, {
+    crp_2_perm <- sample(df$crp_2)
+    dists      <- circ_dist_24(df$crp_1, crp_2_perm)
+    100 * sum(dists <= circ_dist_threshold) / n_genes
+  })
+
+  perm_p         <- mean(perm_pcts >= obs_pct)
+  perm_null_mean <- mean(perm_pcts)
+  perm_null_sd   <- sd(perm_pcts)
+
+  stat_results <- rbind(stat_results, data.frame(
+    pair                 = label,
+    obs_pct_cc           = round(obs_pct, 1),
+    perm_null_mean_pct   = round(perm_null_mean, 1),
+    perm_null_sd_pct     = round(perm_null_sd, 2),
+    perm_p_value         = perm_p,
+    stringsAsFactors     = FALSE
+  ))
+}
+
+stat_results <- stat_results %>%
+  mutate(perm_p_BH = p.adjust(perm_p_value, method = "BH"))
+
+pairwise_summary <- pairwise_summary %>%
+  left_join(stat_results %>%
+    dplyr::select(pair, perm_null_mean_pct, perm_null_sd_pct,
+                  perm_p_value, perm_p_BH),
+    by = "pair")
+
+write.csv(pairwise_summary,
+          "results/publication_figures/crp_pairwise_summary.csv",
+          row.names = FALSE)
+
+# ── Figure: Fig2C_crp_pairwise_proportion ─────────────────────────────────────
+p_bar <- ggplot(pairwise_summary, aes(x = pair)) +
+  geom_col(aes(y = pct_clock_controlled, fill = pair),
+           colour = "black", width = 0.6) +
+  geom_col(aes(y = perm_null_mean_pct),
+           fill = "grey30", alpha = 0.5, width = 0.25) +
+  geom_errorbar(aes(ymin = perm_null_mean_pct - 2 * perm_null_sd_pct,
+                    ymax = perm_null_mean_pct + 2 * perm_null_sd_pct),
+                width = 0.12, colour = "grey10", linewidth = 0.7) +
+  geom_text(aes(y    = pct_clock_controlled,
+                label = sprintf(
+                  "%d/%d (%.0f%%)\np=%s",
+                  n_clock_controlled, n_shared_genes, pct_clock_controlled,
+                  dplyr::case_when(
+                    perm_p_BH == 0   ~ "<0.001",
+                    perm_p_BH >= 0.1 ~ sprintf("%.2f",  perm_p_BH),
+                    TRUE             ~ sprintf("%.3f", perm_p_BH)
+                  ))),
+            vjust = -0.3, size = 3, lineheight = 0.9) +
+  scale_fill_brewer(palette = "Set2", guide = "none") +
+  scale_y_continuous(limits = c(0, 100), expand = expansion(mult = c(0, 0.18))) +
+  theme_classic() +
+  labs(
+    title    = "Proportion of pairwise-overlap genes with consistent clock-relative phase",
+    subtitle = sprintf(
+      "Threshold: circular distance \u2264 %gh from Bmal1  |  dark bar = permutation null \u00b1 2 SD",
+      circ_dist_threshold),
+    x = NULL, y = "% clock-controlled"
+  ) +
+  theme(axis.text.x = element_text(size = 10, angle = 30, hjust = 1))
+
+p_bar
+ggsave("results/publication_figures/Fig2C_crp_pairwise_proportion.pdf",
+       plot = p_bar, width = 5, height = 5)
+ggsave("results/publication_figures/Fig2C_crp_pairwise_proportion.png",
+       plot = p_bar, width = 5, height = 5, dpi = 300)
+
+# ── Figure: Fig2B_pairwise_CRP_comparison ───────────────────────────────────────────
+scatter_plots <- list()
+
+for (pair in ds_pairs) {
+  d1    <- pair[1];  d2 <- pair[2]
+  label <- paste(d1, d2, sep = "_vs_")
+  df    <- pairwise_crp_results[[label]]
+
+  n_total      <- nrow(df)
+  n_controlled <- sum(df$classification == "Clock-controlled")
+
+  df_counts <- df %>%
+    group_by(crp_1, crp_2, classification) %>%
+    summarise(n = n(), .groups = "drop")
+
+  p <- ggplot(df_counts,
+              aes(x = crp_1, y = crp_2, colour = classification, size = n)) +
+    geom_point(alpha = 0.7) +
+    geom_abline(intercept = 0, slope = 1,
+                linetype = "dashed", colour = "red", linewidth = 0.5) +
+    geom_abline(intercept =  circ_dist_threshold, slope = 1,
+                linetype = "dotted", colour = "grey40") +
+    geom_abline(intercept = -circ_dist_threshold, slope = 1,
+                linetype = "dotted", colour = "grey40") +
+    scale_colour_manual(values = c("Clock-controlled" = "#4C9BE8",
+                                   "Variable"         = "#E87B4C")) +
+    scale_size_area(name = "Gene Count", max_size = 15, breaks = c(1, 3, 5, 10)) +
+    scale_x_continuous(breaks = seq(-12, 12, by = 4)) +
+    scale_y_continuous(breaks = seq(-12, 12, by = 4)) +
+    coord_fixed(ratio = 1, xlim = c(-13, 13), ylim = c(-13, 13)) +
+    theme_classic() +
+    theme(legend.position = "right",
+          plot.title    = element_text(face = "bold", size = 18),
+          plot.subtitle = element_text(size = 12),
+          axis.title    = element_text(size = 12),
+          axis.text     = element_text(size = 12),
+          legend.text   = element_text(size = 12),
+          legend.title  = element_text(size = 12)) +
+    guides(colour = guide_legend(override.aes = list(size = 4)),
+           size   = guide_legend(override.aes = list(alpha = 0.8))) +
+    labs(title    = sprintf("%s vs %s", d1, d2),
+         subtitle = sprintf("n = %d genes | clock-controlled: %d (%.1f%%)",
+                            n_total, n_controlled, 100 * n_controlled / n_total),
+         x = sprintf("%s CRP (h from Bmal1)", d1),
+         y = sprintf("%s CRP (h from Bmal1)", d2),
+         colour = NULL)
+  scatter_plots[[label]] <- p
+}
+
+p_scatter_combined <- wrap_plots(scatter_plots, ncol = 3)
+p_scatter_combined
+
+ggsave("results/publication_figures/Fig2B_pairwise_CRP_comparison.pdf",
+       plot = p_scatter_combined, width = 17, height = 11)
+ggsave("results/publication_figures/Fig2B_pairwise_CRP_comparison.png",
+       plot = p_scatter_combined, width = 17, height = 11, dpi = 300)
+```
+
+```{r enrichment_supp_table4}
+# ── Load pre-computed enrichment CSVs ────────────────────────────────────────
+osmo_enrichment      <- read.csv("results/tables/osmo_enrichment.csv")
+dex_enrichment       <- read.csv("results/tables/dex_enrichment.csv")
+hs_enrichment        <- read.csv("results/tables/hs_enrichment.csv")
+cartilage_enrichment <- read.csv("results/tables/cartilage_enrichment.csv")
+
+enrichment_list <- list(
+  Osmo      = osmo_enrichment,
+  Dex       = dex_enrichment,
+  HS        = hs_enrichment,
+  Cartilage = cartilage_enrichment
+)
+
+categories      <- c("KEGG", "Process", "RCTM", "WikiPathways")
+category_names  <- c("KEGG Pathways", "GO Biological Process", "Reactome", "WikiPathways")
+
+# ── Pairwise enrichment term overlaps ────────────────────────────────────────
+enrichment_overlap_results <- data.frame()
+
+for (cat_idx in seq_along(categories)) {
+  cat_code <- categories[cat_idx]
+  cat_name <- category_names[cat_idx]
+
+  all_terms_cat <- unique(unlist(lapply(enrichment_list, function(e)
+    e %>% filter(category == cat_code) %>% pull(description))))
+  universe_size <- length(all_terms_cat)
+
+  for (i in 1:(n_datasets - 1)) {
+    for (j in (i + 1):n_datasets) {
+      name1 <- dataset_names[i]
+      name2 <- dataset_names[j]
+      res   <- compare_enrichment_overlap(
+        enrichment_list[[name1]], enrichment_list[[name2]],
+        name1, name2, cat_code, universe_size)
+
+      if (res$overlap > 0 || (res$size1 > 0 && res$size2 > 0)) {
+        enrichment_overlap_results <- rbind(enrichment_overlap_results, data.frame(
+          Category        = cat_name,
+          Dataset1        = name1,
+          Dataset2        = name2,
+          Size1           = res$size1,
+          Size2           = res$size2,
+          Overlap         = res$overlap,
+          Expected        = round(res$expected, 2),
+          Fold_Enrichment = round(res$fold_enrichment, 2),
+          Jaccard_Index   = round(res$jaccard, 3),
+          P_value         = format(res$p_value, scientific = TRUE, digits = 3),
+          Significant     = ifelse(res$p_value < 0.05, "Yes", "No"),
+          Percent_of_D1   = round(100 * res$overlap / max(res$size1, 1), 1),
+          Percent_of_D2   = round(100 * res$overlap / max(res$size2, 1), 1),
+          stringsAsFactors = FALSE
+        ))
+      }
+    }
+  }
+}
+
+write.csv(enrichment_overlap_results,
+          "results/publication_figures/Supplementary_table_4.csv",
+          row.names = FALSE)
+cat("Supplementary_table_4.csv saved.\n")
+print(enrichment_overlap_results)
+```
+
+```{r enrichment_figures}
+# ── Combined enrichment data for figures ─────────────────────────────────────
+osmo_enrichment$dataset      <- "Osmo"
+dex_enrichment$dataset       <- "Dex"
+hs_enrichment$dataset        <- "HS"
+cartilage_enrichment$dataset <- "Cartilage"
+
+all_enrich <- bind_rows(
+  osmo_enrichment, dex_enrichment, hs_enrichment, cartilage_enrichment
+) %>%
+  filter(category != "Process") %>%
+  mutate(
+    category_label = case_when(
+      category == "KEGG"         ~ "KEGG Pathways",
+      category == "RCTM"         ~ "Reactome",
+      category == "WikiPathways" ~ "WikiPathways",
+      TRUE                       ~ category
+    ),
+    neg_log10_fdr = -log10(fdr),
+    dataset = factor(dataset, levels = c("Osmo", "Dex", "HS", "Cartilage"))
+  )
+
+dataset_colors <- c(Osmo = "#4C9BE8", Dex = "#E87B4C",
+                    HS   = "#4CE87B", Cartilage = "#C44CE8")
+
+# Terms present in >= 2 datasets
+term_dataset_counts <- all_enrich %>%
+  group_by(category_label, description) %>%
+  summarise(n_datasets = n_distinct(dataset), .groups = "drop") %>%
+  filter(n_datasets >= 2)
+
+plot_data <- all_enrich %>%
+  semi_join(term_dataset_counts, by = c("category_label", "description"))
+
+# ── Figure: enrichment_jaccard_KEGG/RCTM/WikiPathways ───────────────────────
+fig_cats <- c("KEGG", "RCTM", "WikiPathways")
+
+for (cat_code in fig_cats) {
+  cat_name    <- category_names[match(cat_code, categories)]
+  cat_results <- enrichment_overlap_results %>% filter(Category == cat_name)
+
+  jac_mat <- matrix(1, nrow = n_datasets, ncol = n_datasets,
+                    dimnames = list(dataset_names, dataset_names))
+
+  for (k in seq_len(nrow(cat_results))) {
+    n1 <- as.character(cat_results$Dataset1[k])
+    n2 <- as.character(cat_results$Dataset2[k])
+    j  <- as.numeric(cat_results$Jaccard_Index[k])
+    jac_mat[n1, n2] <- j
+    jac_mat[n2, n1] <- j
+  }
+
+  p_jac <- pheatmap(jac_mat,
+    display_numbers = TRUE, number_format = "%.3f",
+    cluster_rows    = FALSE, cluster_cols = FALSE,
+    color           = colorRampPalette(c("white", "orange", "red"))(100),
+    main            = sprintf("%s\nJaccard Index of enriched terms", cat_name),
+    fontsize_number = 20, fontsize = 20)
+
+  ggsave(sprintf("results/publication_figures/Fig3B_enrichment_jaccard_%s.pdf",  cat_code),
+         plot = p_jac, width = 7, height = 6)
+  ggsave(sprintf("results/publication_figures/Fig3B_enrichment_jaccard_%s.png", cat_code),
+         plot = p_jac, width = 7, height = 6, dpi = 300)
+}
+
+# ── Figure: Supplementary_Figure1 ───────────────────────────────────────────
+p_tile_kegg <- make_tile_heatmap(plot_data, "KEGG Pathways")
+p_tile_rctm <- make_tile_heatmap(plot_data, "Reactome")
+p_tile_wiki <- make_tile_heatmap(plot_data, "WikiPathways")
+
+p_tile_combined <- p_tile_kegg / p_tile_rctm / p_tile_wiki +
+  plot_annotation(
+    title    = "Shared enriched terms across datasets",
+    subtitle = "Terms present in \u2265 2 datasets | fill = -log10(FDR) | grey = absent/not significant")
+
+p_tile_combined
+
+ggsave("results/publication_figures/Supplementary_Figure1.pdf",
+       plot = p_tile_combined, width = 10, height = 18)
+ggsave("results/publication_figures/Supplementary_Figure1.png",
+       plot = p_tile_combined, width = 8, height = 16, dpi = 300)
+
+# ── Figure: Fig3A_enrichment_barchart ─────────────────────────────────────────────
+top5_data <- all_enrich %>%
+  group_by(category_label, dataset) %>%
+  slice_min(order_by = fdr, n = 5, with_ties = FALSE) %>%
+  ungroup() %>%
+  mutate(description = fct_reorder(description, neg_log10_fdr))
+
+p_bar_kegg <- make_bar_chart(top5_data, "KEGG Pathways",  dataset_colors)
+p_bar_rctm <- make_bar_chart(top5_data, "Reactome",       dataset_colors)
+p_bar_wiki <- make_bar_chart(top5_data, "WikiPathways",   dataset_colors)
+
+p_bar_combined <- p_bar_kegg / p_bar_rctm / p_bar_wiki +
+  plot_annotation(title    = "Top 5 enriched terms per dataset",
+                  subtitle = "Grouped by category")
+
+p_bar_combined
+
+ggsave("results/publication_figures/Fig3A_enrichment_barchart.pdf",
+       plot = p_bar_combined, width = 7, height = 10)
+ggsave("results/publication_figures/Fig3A_enrichment_barchart.png",
+       plot = p_bar_combined, width = 7, height = 10, dpi = 300)
+```
+

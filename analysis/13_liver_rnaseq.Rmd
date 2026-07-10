@@ -1,0 +1,407 @@
+---
+title: "Untitled"
+output: github_document
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+## Load libraries
+
+```{r libraries, message=FALSE}
+library(AnnotationDbi)
+library(mouse4302.db)
+library(dplyr)
+library(tidyr)
+library(rain)
+library(genefilter)
+library(httr)
+library(jsonlite)
+library(STRINGdb)
+library(biomaRt)
+```
+
+## Load data
+
+```{r load_data}
+dat <- read.csv("data/raw/GSE158600_genes_fpkm.csv", header = TRUE)
+
+```
+
+## Map gene IDs to Ensembl IDs
+
+```{r gene_id_mapping}
+ensembl_mart <- connect_biomart("mmusculus_gene_ensembl")
+
+gene_info <- get_biomart_annotation(
+  ids = dat$tracking_id,
+  mart = ensembl_mart,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters    = "external_gene_name",
+  cache_key = "liver_rnaseq_external_gene_name"
+)
+
+# Second pass: match by mgi_symbol (tracking_id equals the official MGI symbol)
+unmapped      <- setdiff(dat$tracking_id, gene_info$external_gene_name)
+gene_info_mgi <- if (length(unmapped) > 0) {
+  res <- get_biomart_annotation(
+    ids = unmapped,
+    mart = ensembl_mart,
+    attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+    filters    = "mgi_symbol",
+    cache_key = "liver_rnaseq_mgi_symbol"
+  )
+  if (nrow(res) > 0) res$external_gene_name <- res$mgi_symbol
+  res
+} else {
+  data.frame()
+}
+
+# Third pass: match by external synonym (e.g. Arntl is an alias; Bmal1 is the MGI symbol)
+unmapped2     <- setdiff(unmapped,
+                         if (nrow(gene_info_mgi) > 0) gene_info_mgi$external_gene_name
+                         else character(0))
+gene_info_syn <- if (length(unmapped2) > 0) {
+  res <- get_biomart_annotation(
+    ids = unmapped2,
+    mart = ensembl_mart,
+    attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name",
+                   "description", "external_synonym"),
+    filters    = "external_synonym",
+    cache_key = "liver_rnaseq_external_synonym"
+  )
+  if (nrow(res) > 0) {
+    # BioMart may return multiple synonyms per gene; keep only rows where
+    # the synonym matches one of our queried aliases, then use it as the join key
+    res <- res[res$external_synonym %in% unmapped2, ]
+    res <- res[!duplicated(res$external_synonym), ]
+    res$external_gene_name <- res$external_synonym
+    res[, c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description")]
+  } else {
+    data.frame()
+  }
+} else {
+  data.frame()
+}
+
+gene_info <- rbind(gene_info, gene_info_mgi, gene_info_syn)
+
+gene_info$description <- trimws(gsub("\\[.*?\\]", "", gene_info$description))
+gene_info <- gene_info[!duplicated(gene_info$external_gene_name), ]
+gene_info <- gene_info[!duplicated(gene_info$ensembl_gene_id), ]
+
+# Add Ensembl IDs and keep only mapped genes
+dat <- merge(dat, gene_info[, c("ensembl_gene_id", "external_gene_name")],
+             by.x = "tracking_id", by.y = "external_gene_name")
+dat <- dat[nzchar(dat$ensembl_gene_id), ]
+rownames(dat) <- dat$ensembl_gene_id
+```
+
+## Split by condition
+
+```{r split_by_condition}
+AL_WT  <- dat[, grep("^AL_WT",  names(dat), value = TRUE)]
+AL_KO  <- dat[, grep("^AL_KO",  names(dat), value = TRUE)]
+AL_RE  <- dat[, grep("^AL_RE",  names(dat), value = TRUE)]
+TRF_WT <- dat[, grep("^TRF_WT", names(dat), value = TRUE)]
+TRF_KO <- dat[, grep("^TRF_KO", names(dat), value = TRUE)]
+TRF_RE <- dat[, grep("^TRF_RE", names(dat), value = TRUE)]
+```
+
+## Helper functions
+
+```{r string_mapping_helpers}
+# Sort condition columns by time point then replicate number
+sort_condition_cols <- function(df) {
+  nms   <- colnames(df)
+  times <- suppressWarnings(as.numeric(sub(".*[A-Za-z](\\d+)_\\d+$", "\\1", nms)))
+  reps  <- suppressWarnings(as.numeric(sub(".*_(\\d+)$",            "\\1", nms)))
+  df[, order(times, reps, na.last = TRUE), drop = FALSE]
+}
+
+# Keep genes where ≥1 time point has median FPKM >= min_peak
+# AND at least one neighbouring time point has median FPKM >= min_adjacent
+filter_expr_circadian <- function(df, n_reps, min_peak = 1, min_adjacent = 0.5) {
+  n_timepoints <- ncol(df) / n_reps
+
+  tp_medians <- do.call(cbind, lapply(seq_len(n_timepoints), function(tp) {
+    cols <- ((tp - 1) * n_reps + 1):(tp * n_reps)
+    apply(df[, cols, drop = FALSE], 1, median)
+  }))
+
+  passes <- apply(tp_medians, 1, function(meds) {
+    peak_tps <- which(meds >= min_peak)
+    if (length(peak_tps) == 0) return(FALSE)
+    any(sapply(peak_tps, function(tp) {
+      neighbours <- c(tp - 1, tp + 1)
+      neighbours <- neighbours[neighbours >= 1 & neighbours <= n_timepoints]
+      any(meds[neighbours] >= min_adjacent)
+    }))
+  })
+
+  df[passes, , drop = FALSE]
+}
+
+# Run RAIN and return expression data merged with RAIN results
+run_rain_condition <- function(expr_df, n_reps, deltat = 4, period = 24,
+                               min_peak = 1, min_adjacent = 0.5, phase_offset = 0) {
+  expr_df      <- filter_expr_circadian(expr_df, n_reps, min_peak, min_adjacent)
+  n_timepoints <- ncol(expr_df) / n_reps
+
+  rain_res <- rain(t(expr_df),
+                   deltat           = deltat,
+                   period           = period,
+                   measure.sequence = rep(n_reps, n_timepoints),
+                   peak.border      = c(0.3, 0.7),
+                   method           = "independent",
+                   adjp.method      = "ABH",
+                   verbose          = TRUE)
+
+  rain_res$BH.Q  <- p.adjust(rain_res$pVal, method = "BH")
+  rain_res$phase <- (rain_res$phase + phase_offset) %% period
+
+  circ           <- merge(expr_df, rain_res, by = 0, all.x = TRUE)
+  circ$Row.names <- gsub("\\..*", "", circ$Row.names)
+  circ
+}
+
+# Build STRING preferred-name → MGI symbol mapping dictionary
+
+```
+
+## STRING network and enrichment functions
+
+```{r string_network_helpers}
+
+
+```
+
+## Condition processing function
+
+```{r processing_function}
+process_condition_for_shiny <- function(
+    condition_df, condition_name, gene_info,
+    n_reps         = 3,
+    phase_colors   = c("0" = "orange", "4" = "yellow", "8" = "red",
+                       "12" = "purple", "16" = "navy", "20" = "lightblue"),
+    min_peak       = 1,
+    min_adjacent   = 0.5,
+    phase_offset   = 0) {
+
+  # 1. Sort, filter, run RAIN --------------------------------------------------
+  sorted_df    <- sort_condition_cols(condition_df)
+  expr_df      <- filter_expr_circadian(sorted_df, n_reps, min_peak, min_adjacent)
+  expr_cols    <- colnames(expr_df)          # captured from the filtered df
+  n_timepoints <- ncol(expr_df) / n_reps
+
+  rain_res <- rain(t(expr_df),
+                   deltat           = 4,
+                   period           = 24,
+                   measure.sequence = rep(n_reps, n_timepoints),
+                   peak.border      = c(0.3, 0.7),
+                   method           = "independent",
+                   adjp.method      = "ABH",
+                   verbose          = FALSE)
+
+  rain_res$BH.Q  <- p.adjust(rain_res$pVal, method = "BH")
+  rain_res$phase <- (rain_res$phase + phase_offset) %% 24
+
+  circ           <- merge(expr_df, rain_res, by = 0, all.x = TRUE)
+  circ$Row.names <- gsub("\\..*", "", circ$Row.names)
+
+  # 2. Merge with gene annotations ---------------------------------------------
+  merged <- merge(circ,
+                  gene_info[, c("ensembl_gene_id", "mgi_symbol",
+                                "external_gene_name", "description")],
+                  by.x = "Row.names", by.y = "ensembl_gene_id", all.x = TRUE)
+  merged$mgi_symbol <- ifelse(!is.na(merged$mgi_symbol) & nzchar(merged$mgi_symbol),
+                              merged$mgi_symbol, merged$external_gene_name)
+
+  # 3. Significant genes for STRING --------------------------------------------
+  nodes_data <- merged %>%
+    dplyr::filter(BH.Q <= 0.05, !is.na(mgi_symbol), nzchar(mgi_symbol)) %>%
+    dplyr::rename(symbol = mgi_symbol)
+
+  if (nrow(nodes_data) == 0) {
+    warning("No significantly rhythmic genes for condition: ", condition_name)
+    return(invisible(NULL))
+  }
+
+  gene_list    <- nodes_data$Row.names
+  gene_mapping <- create_gene_mapping(gene_ids = gene_list, symbols = nodes_data$symbol)
+
+  # 4. STRING network and enrichment -------------------------------------------
+  network_bundle <- get_string_network_bundle(
+    gene_list = gene_list,
+    gene_mapping = gene_mapping,
+    species_id = 10090,
+    nodes_data = nodes_data
+  )
+  edges <- network_bundle$edges_by_threshold
+  cluster_data <- network_bundle$cluster_data
+
+  cluster_data <- map_enrichment_genes(cluster_data, gene_mapping)
+  cluster_data$preferredNames <- lapply(cluster_data$preferredNames, function(s) {
+    trimws(strsplit(s, ",")[[1]])
+  })
+
+  # 5. Cluster lookups ---------------------------------------------------------
+  cluster_descriptions <- cluster_data %>%
+    dplyr::select(cluster = term, cluster_description = description, category)
+
+  reformatted_clusters <- cluster_data %>%
+    dplyr::select(cluster = term, cluster_description = description,
+                  id = preferredNames, category) %>%
+    unnest(id)
+
+  # 6. Build nodes -------------------------------------------------------------
+  nodes <- data.frame(id    = nodes_data$symbol,
+                      label = nodes_data$symbol,
+                      phase = nodes_data$phase,
+                      stringsAsFactors = FALSE) %>%
+    dplyr::mutate(color = phase_colors[as.character(phase)]) %>%
+    dplyr::select(-phase) %>%
+    dplyr::left_join(reformatted_clusters, by = "id") %>%
+    dplyr::group_by(id, label, color) %>%
+    dplyr::summarize(clusters            = list(unique(cluster)),
+                     cluster_description = list(unique(cluster_description)),
+                     .groups = "drop")
+
+  merged_nodes <- merge(nodes,
+                        gene_info[, c("mgi_symbol", "ensembl_gene_id", "description")],
+                        by.x = "label", by.y = "mgi_symbol", all.x = TRUE) %>%
+    dplyr::filter(!duplicated(label))
+
+  # 7. Node tooltips -----------------------------------------------------------
+  node_tooltips <- nodes %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(
+      cluster_info = list(
+        cluster_descriptions %>%
+          dplyr::filter(cluster %in% unlist(clusters)) %>%
+          dplyr::select(cluster, cluster_description, category)
+      ),
+      enrichment_sections = list(
+        if (nrow(cluster_info) > 0) {
+          sapply(unique(cluster_info$category), function(cat) {
+            cat_name <- switch(cat,
+              "Process"      = "GO Biological Process",
+              "KEGG"         = "KEGG Pathway",
+              "RCTM"         = "Reactome",
+              "WikiPathways" = "WikiPathways",
+              cat
+            )
+            terms <- cluster_info %>%
+              dplyr::filter(category == cat) %>%
+              dplyr::pull(cluster_description)
+            if (length(terms) > 0)
+              paste0("<b>", cat_name, ":</b> ", paste(terms, collapse = ", "))
+            else
+              character(0)
+          })
+        } else character(0)
+      ),
+      formatted_tooltip = paste(na.omit(unlist(enrichment_sections)), collapse = "<br>")
+    ) %>%
+    dplyr::select(id, formatted_tooltip)
+
+  nodes_with_tooltips <- merged_nodes %>%
+    dplyr::left_join(node_tooltips, by = "id") %>%
+    dplyr::mutate(title = paste0(
+      "<b>", label, "</b> - ", description,
+      ifelse(nchar(formatted_tooltip) > 0, paste0("<br><br>", formatted_tooltip), "")
+    )) %>%
+    dplyr::select(-c(cluster_description, formatted_tooltip, clusters)) %>%
+    dplyr::filter(!is.na(id))
+
+  nodes <- nodes %>% dplyr::filter(!is.na(id))
+  cluster_for_plot <- cluster_data %>%
+    dplyr::select(cluster = term, genes = preferredNames)
+
+  # 8. mean_sd for Shiny time-series plot --------------------------------------
+  time_labels <- rep(sprintf("%02d", seq_len(n_timepoints)), each = n_reps)
+
+  df_long <- do.call(rbind, lapply(seq_along(expr_cols), function(i) {
+    data.frame(
+      Gene       = merged$mgi_symbol,
+      time_point = time_labels[i],
+      reads      = merged[[expr_cols[i]]],
+      stringsAsFactors = FALSE
+    )
+  }))
+  df_long <- df_long[order(df_long$time_point), ]
+
+  mean_data <- aggregate(reads ~ Gene + time_point, df_long, mean)
+  sd_data   <- aggregate(reads ~ Gene + time_point, df_long, sd)
+  mean_sd   <- merge(mean_data, sd_data, by = c("Gene", "time_point"))
+  colnames(mean_sd)[3:4] <- c("mean", "sd")
+
+  qval_df <- merged[, c("mgi_symbol", "BH.Q")]
+  colnames(qval_df) <- c("Gene", "BH.Q")
+  mean_sd <- dplyr::inner_join(mean_sd, qval_df, by = "Gene")
+
+  # 9. display_dt with amplitude -----------------------------------------------
+  time_nums <- sort(unique(as.numeric(sub(".*[A-Za-z](\\d+)_\\d+$", "\\1", expr_cols))))
+  for (t in time_nums) {
+    t_cols <- grep(paste0("[A-Za-z]", t, "_\\d+$"), names(merged), value = TRUE)
+    merged[[paste0("ZT", t)]] <- rowMeans(merged[, t_cols, drop = FALSE])
+  }
+  zt_cols            <- paste0("ZT", time_nums)
+  min_val            <- apply(merged[, zt_cols, drop = FALSE], 1, min)
+  max_val            <- apply(merged[, zt_cols, drop = FALSE], 1, max)
+  merged$Amp_fc_log2 <- log2(max_val / min_val)
+
+  display_dt <- merged %>%
+    dplyr::select(mgi_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+    dplyr::rename(symbol = mgi_symbol) %>%
+    dplyr::arrange(BH.Q)
+
+  # 10. Save outputs -----------------------------------------------------------
+  out_dir <- file.path("results", "shiny_data", "mouse", "liver_RNAseq", condition_name)
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  save_rds_checked(nodes,                file.path(out_dir, paste0(condition_name, "_nodes.rds")))
+  save_string_edges_by_threshold(edges, output_dir = out_dir, prefix = condition_name)
+  save_rds_checked(nodes_with_tooltips,  file.path(out_dir, paste0(condition_name, "_nodes_with_tooltips.rds")))
+  save_rds_checked(cluster_for_plot,     file.path(out_dir, paste0(condition_name, "_cluster_for_plot.rds")))
+  save_rds_checked(cluster_descriptions, file.path(out_dir, paste0(condition_name, "_cluster_descriptions.rds")))
+  save_rds_checked(mean_sd,              file.path(out_dir, paste0(condition_name, "_data.rds")))
+  save_rds_checked(display_dt,           file.path(out_dir, paste0(condition_name, "_display_dt.rds")))
+
+  invisible(list(nodes = nodes, edges = edges, mean_sd = mean_sd,
+                 display_dt = display_dt))
+}
+```
+
+## Run analysis
+
+```{r run_analysis}
+conditions <- list(
+  AL_WT  = AL_WT,
+  AL_KO  = AL_KO,
+  AL_RE  = AL_RE,
+  TRF_WT = TRF_WT,
+  TRF_KO = TRF_KO,
+  TRF_RE = TRF_RE
+)
+
+results <- lapply(names(conditions), function(cond_name) {
+  message("Processing condition: ", cond_name)
+  process_condition_for_shiny(
+    condition_df   = conditions[[cond_name]],
+    condition_name = cond_name,
+    gene_info      = gene_info
+  )
+})
+names(results) <- names(conditions)
+```

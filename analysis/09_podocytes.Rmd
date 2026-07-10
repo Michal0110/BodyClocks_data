@@ -1,0 +1,240 @@
+---
+title: "podocytes processing"
+output: github_document
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+```{r libraries}
+library(dplyr)
+library(tidyr)
+library(DESeq2)
+library(ggplot2)
+library(rain)
+library(biomaRt)
+library(STRINGdb)
+library(httr)
+library(jsonlite)
+```
+
+
+
+```{r load_data_deseq2_normalization}
+raw_data <- read.csv("data/raw/podocyte_data.csv", header = TRUE, row.names = 1)
+data_table <- raw_data %>%
+   dplyr::filter(rowMeans(.) >= 50)
+
+# DESeq2 processing
+sampletable <- read.table("data/meta/podocyte_meta.csv", header=T, sep=",", row.names=1)
+
+dds <- DESeqDataSetFromMatrix(countData = data_table,
+                              colData = sampletable,
+                              design = ~ time)
+
+
+
+dds$condition <- factor(dds$time, levels = c("4h", "8h", "12h", "16h", "20h", "24h", "28h", "32h", "36h", "40h", "44h", "48h"))
+dds1 <- DESeq(dds)
+
+vsd <- vst(dds1, blind=FALSE)
+data_order <- c("4h", "8h", "12h", "16h", "20h", "24h", "28h", "32h", "36h", "40h", "44h", "48h")
+vsd$time <- factor(vsd$time, levels = data_order)
+```
+
+
+
+```{r run_rain_annotate, echo=FALSE}
+# RAIN circadian analysis
+
+pods <- counts(dds1, normalized = TRUE)
+#pods <- counts(dds1, normalized=TRUE)
+col_names <- c("pods_04h_a", "pods_08h_a", "pods_12h_a", "pods_16h_a", "pods_20h_a", "pods_24h_a", "pods_28h_a", "pods_32h_a", "pods_36h_a", "pods_40h_a", "pods_44h_a", "pods_48h_a", "pods_04h_b", "pods_08h_b", "pods_12h_b", "pods_16h_b", "pods_20h_b", "pods_24h_b", "pods_28h_b", "pods_32h_b", "pods_36h_b", "pods_40h_b", "pods_44h_b", "pods_48h_b", "pods_04h_c", "pods_08h_c", "pods_12h_c", "pods_16h_c", "pods_20h_c", "pods_24h_c", "pods_28h_c", "pods_32h_c", "pods_36h_c", "pods_40h_c", "pods_44h_c", "pods_48h_c")
+colnames(pods) <- col_names
+pods <- pods[, order(colnames(pods))]
+
+pods_RAIN <- rain(t(pods), deltat=4, period=24, measure.sequence = c(3,3,3,3,3,3,3,3,3,3,3,3),
+                peak.border=c(0.3, 0.7), method = "longitudinal" , adjp.method='ABH', verbose=TRUE) # independent for mouse sampling,
+
+p_values_pods <- pods_RAIN$pVal
+
+pods_RAIN$BH.Q <- p.adjust(p_values_pods, method = "BH")
+
+norm_counts <- counts(dds1, normalized=TRUE)
+pods_circ <- merge(norm_counts, pods_RAIN, by = 0, all.x = TRUE)
+
+# Remove .xx from the Row.names column
+pods_circ$Row.names <- gsub("\\..*", "", pods_circ$Row.names)
+
+
+# Set up the Ensembl BioMart connection
+ensembl <- connect_biomart("mmusculus_gene_ensembl")
+
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = pods_circ$Row.names,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "podocytes_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$external_gene_name), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+merged <- merge(pods_circ, gene_info, by.x = "Row.names", by.y = "ensembl_gene_id", all.x = TRUE)
+write.csv(merged, file = "results/tables/pods_circ.csv")
+```
+
+```{r prepare_string_nodes}
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+
+# Get list of gene symbols for STRING API
+#gene_list <- nodes_data$symbol
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$Row.names
+
+# Define STRING API base URL
+string_api_url <- "https://string-db.org/api"
+output_format <- "json"  # or tsv
+species_id <- 10090  # Mus musculus (mouse)
+```
+
+```{r prepare_gene_mapping}
+# Create comprehensive gene mapping dictionary
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$Row.names,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+
+# Map STRING preferred names to MGI symbols
+```
+
+
+```{r build_string_network}
+# Get protein-protein interactions and enrichment data using STRINGdb
+
+# Function to get protein-protein interactions (edges)
+
+
+# Function to get selected enrichment data
+
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = 10090,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+
+phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors)
+
+cluster_data <- network_outputs$cluster_data
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/podocytes_dexamethasone",
+  prefix = "pods"
+)
+
+```
+
+```{r prepare_timeseries_data}
+# Process data frame for plotting in bodyclocks shiny app
+df <- subset(merged, select = -c(Row.names, pVal, phase, peak.shape, period, BH.Q, external_gene_name, description, preferred_symbol))
+col_names2 <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12","Gene")
+colnames(df) <- col_names2
+data <- pivot_longer(df, cols = !Gene, names_to = "time_point", values_to = "reads")
+
+qval_df <- merged[c("mgi_symbol", "BH.Q")]
+new_pval_names <- c("Gene", "BH.Q")
+colnames(qval_df) <- new_pval_names
+
+data <- data[order(data$time_point),]
+
+mean_data <- aggregate(reads ~ Gene + time_point, data, mean)
+sd_data <- aggregate(reads ~ Gene + time_point, data, sd)
+mean_sd <- merge(mean_data, sd_data, by = c("Gene", "time_point"))
+names <- c("Gene", "time_point", "mean", "sd")
+colnames(mean_sd) <- names
+mean_sd <- inner_join(mean_sd, qval_df, by = "Gene")
+save_rds_checked(mean_sd, file = "results/shiny_data/mouse/podocytes_dexamethasone/pods_data.rds")
+```
+
+
+```{r compute_amplitude_display_table}
+# Prepare data frame for display
+
+dt <- merged %>%
+  mutate(ZT4 = rowMeans(dplyr::select(., c("RP01_S37_rawCounts", "RP07_S43_rawCounts", "RP13_S49_rawCounts", "RP19_S55_rawCounts", "RP25_S61_rawCounts", "RP31_S67_rawCounts"))),
+         ZT8 = rowMeans(dplyr::select(., c("RP02_S38_rawCounts", "RP08_S44_rawCounts", "RP14_S50_rawCounts", "RP20_S56_rawCounts", "RP26_S62_rawCounts", "RP32_S68_rawCounts"))),
+         ZT12 = rowMeans(dplyr::select(., c("RP03_S39_rawCounts", "RP09_S45_rawCounts", "RP15_S51_rawCounts", "RP21_S57_rawCounts", "RP27_S63_rawCounts", "RP33_S69_rawCounts"))),
+         ZT16 = rowMeans(dplyr::select(., c("RP04_S40_rawCounts", "RP10_S46_rawCounts", "RP16_S52_rawCounts", "RP22_S58_rawCounts", "RP28_S64_rawCounts", "RP34_S70_rawCounts"))),
+         ZT20 = rowMeans(dplyr::select(., c("RP05_S41_rawCounts", "RP11_S47_rawCounts", "RP17_S53_rawCounts", "RP23_S59_rawCounts", "RP29_S65_rawCounts", "RP35_S71_rawCounts"))),
+         ZT24 = rowMeans(dplyr::select(., c("RP06_S42_rawCounts", "RP12_S48_rawCounts", "RP18_S54_rawCounts", "RP24_S60_rawCounts", "RP30_S66_rawCounts", "RP36_S72_rawCounts")))
+  )
+
+means <- dt[c("ZT4", "ZT8", "ZT12", "ZT16", "ZT20", "ZT24")]
+
+min_val <- apply(means, 1, min)
+max_val <- apply(means, 1, max)
+
+Amp_fc_log2 <- log2(max_val / min_val)
+Amp_fc <- max_val / min_val
+
+dt <- cbind(dt, Amp_fc_log2, Amp_fc)
+
+
+display_dt <- dt %>%
+  dplyr::select(mgi_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+  dplyr::rename(symbol = mgi_symbol) %>%
+  arrange(BH.Q)
+
+save_rds_checked(display_dt, file = "results/shiny_data/mouse/podocytes_dexamethasone/pods_display_dt.rds")
+```

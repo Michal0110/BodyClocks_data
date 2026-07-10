@@ -1,0 +1,8 @@
+docs/original_scripts/
+results/
+renv/
+*.html
+*.nb.html
+*.RData
+*.Rhistory
+

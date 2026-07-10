@@ -1,0 +1,327 @@
+---
+title: "GSE54650 mouse transcriptomic atlas - batch processing for BodyClocks"
+output: github_document
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+```{r libraries}
+library(dplyr)
+library(tidyr)
+library(rain)
+library(biomaRt)
+library(STRINGdb)
+library(httr)
+library(jsonlite)
+library(ggplot2)
+```
+
+```{r load_data}
+# Load all tissue datasets into a named list
+tissues <- list(
+  adrenal_gland = read.csv("data/raw/GSE54650/Adr.csv"),
+  aorta         = read.csv("data/raw/GSE54650/Aor.csv"),
+  brown_adipose = read.csv("data/raw/GSE54650/BFat.csv"),
+  brain_stem    = read.csv("data/raw/GSE54650/Bstm.csv"),
+  cerebellum    = read.csv("data/raw/GSE54650/Cer.csv"),
+  heart         = read.csv("data/raw/GSE54650/Hrt.csv"),
+  hypothalamus  = read.csv("data/raw/GSE54650/Hyp.csv"),
+  kidney        = read.csv("data/raw/GSE54650/Kid.csv"),
+  liver         = read.csv("data/raw/GSE54650/Liv.csv"),
+  lung          = read.csv("data/raw/GSE54650/Lun.csv"),
+  muscle        = read.csv("data/raw/GSE54650/Mus.csv"),
+  white_adipose = read.csv("data/raw/GSE54650/WFat.csv")
+)
+```
+
+```{r setup_connections}
+# One-time setup: BioMart connection and phase colors
+
+ensembl_mart <- connect_biomart("mmusculus_gene_ensembl")
+
+phase_colors <- c(
+  "0" = "greenyellow",    # ZT0/24 - lights on/sunrise
+  "2" = "lightgreen",     # ZT2 - early morning
+  "4" = "cyan",           # ZT4 - late morning
+  "6" = "skyblue",        # ZT6 - noon (brightest)
+  "8" = "lightyellow",    # ZT8 - early afternoon
+  "10" = "yellow",        # ZT10 - late afternoon
+  "12" = "gold",          # ZT12 - dusk/evening
+  "14" = "orange",        # ZT14 - early evening
+  "16" = "orangered",     # ZT16 - late evening
+  "18" = "purple",        # ZT18 - early night
+  "20" = "navy",          # ZT20 - night (darkest)
+  "22" = "darkblue",      # ZT22 - late night
+  "24" = "greenyellow"    # ZT24 - same as ZT0
+)
+```
+
+```{r helper_functions}
+# STRING mapping and enrichment helper functions
+
+
+
+
+
+```
+
+```{r process_tissue}
+process_tissue <- function(raw_data, tissue_name, ensembl_mart, phase_colors) {
+
+  cat("\n========================================\n")
+  cat("Processing:", tissue_name, "\n")
+  cat("========================================\n")
+
+  # --- 1. Collapse duplicate probes ---
+  # Microarray data often has multiple probes per gene; keep the one with highest mean expression
+  cat("Collapsing duplicate probes...\n")
+
+  cleaned_data <- raw_data %>%
+    mutate(mean_expr = rowMeans(dplyr::select(., -ENSEMBL, -Symbol))) %>%
+    group_by(ENSEMBL) %>%
+    slice_max(order_by = mean_expr, n = 1, with_ties = FALSE) %>%
+    ungroup() %>%
+    dplyr::select(-mean_expr, -Symbol)
+
+  cleaned_data <- as.data.frame(cleaned_data)
+  rownames(cleaned_data) <- cleaned_data$ENSEMBL
+  data <- cleaned_data[, -1]
+
+  # --- 2. RAIN circadian analysis ---
+  cat("Running RAIN analysis...\n")
+
+  RAIN_result <- rain(t(data), deltat = 2, period = 24, nr.series = 1,
+                      peak.border = c(0.3, 0.7), method = "independent",
+                      adjp.method = 'ABH', verbose = TRUE)
+
+  p_values <- RAIN_result$pVal
+  RAIN_result$BH.Q <- p.adjust(p_values, method = "BH")
+  RAIN_result$ENSEMBL <- row.names(RAIN_result)
+
+  analysed <- merge(cleaned_data, RAIN_result, by.x = "ENSEMBL", by.y = "ENSEMBL", all.x = TRUE)
+
+  # --- 3. BioMart gene annotation ---
+  cat("Fetching BioMart annotations...\n")
+
+  gene_info <- get_biomart_annotation(
+    ids = analysed$ENSEMBL,
+    mart = ensembl_mart,
+    attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+    filters = "ensembl_gene_id",
+    cache_key = paste0("mouse_atlas_", tissue_name, "_gene_info")
+  )
+
+  gene_info <- gene_info %>%
+    mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "",
+                                    mgi_symbol, external_gene_name))
+
+  gene_info <- gene_info[!duplicated(gene_info$external_gene_name), ]
+  gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+  gene_info$description <- trimws(gene_info$description)
+
+  merged <- merge(analysed, gene_info, by.x = "ENSEMBL", by.y = "ensembl_gene_id", all.x = TRUE)
+  write.csv(merged, file.path("results", "tables", paste0(tissue_name, "_circ.csv")), row.names = FALSE)
+
+  # --- 4. STRING network and enrichment ---
+  cat("Building STRING network...\n")
+
+  nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = mgi_symbol)
+
+  gene_list <- nodes_data$ENSEMBL
+
+  out_dir <- file.path("results", "shiny_data", "mouse", tissue_name)
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+
+  if (length(gene_list) == 0) {
+    cat("WARNING: No significant genes (BH.Q <= 0.05) for", tissue_name, "- skipping STRING\n")
+    save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, "_nodes.rds")))
+    save_string_edges_by_threshold(
+      empty_string_edges_by_threshold(),
+      output_dir = out_dir,
+      prefix = tissue_name
+    )
+    save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, "_nodes_with_tooltips.rds")))
+    save_rds_checked(list(), file = file.path(out_dir, paste0(tissue_name, "_cluster_for_plot.rds")))
+    save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, "_cluster_descriptions.rds")))
+  } else {
+    gene_mapping <- create_gene_mapping(gene_ids = merged$ENSEMBL, symbols = nodes_data$symbol)
+    cat("Created mapping for", length(gene_mapping), "genes\n")
+
+    network_bundle <- get_string_network_bundle(
+      gene_list = gene_list,
+      gene_mapping = gene_mapping,
+      species_id = 10090,
+      nodes_data = nodes_data
+    )
+    edges <- network_bundle$edges_by_threshold
+    cluster_data <- network_bundle$cluster_data
+
+    cluster_descriptions <- cluster_data %>%
+      dplyr::select(cluster = term, cluster_description = description, category)
+
+    for (i in 1:nrow(cluster_data)) {
+      cluster_data$preferredNames[[i]] <- sapply(cluster_data$preferredNames[[i]],
+                                                 function(x) map_to_mgi(x, gene_mapping))
+    }
+
+    cluster_data <- map_enrichment_genes(cluster_data, gene_mapping)
+
+    cluster_data$preferredNames <- lapply(cluster_data$preferredNames, function(gene_str) {
+      if (is.character(gene_str) && length(gene_str) == 1) {
+        gene_vector <- trimws(strsplit(gene_str, ",")[[1]])
+        return(gene_vector)
+      } else {
+        return(gene_str)
+      }
+    })
+
+    reformatted_clusters <- cluster_data %>%
+      dplyr::select(cluster = term, cluster_description = description, id = preferredNames, category) %>%
+      unnest(id)
+
+    nodes_data2 <- data.frame(id = nodes_data$symbol, label = nodes_data$symbol, phase = nodes_data$phase)
+    nodes_data2$phase <- (nodes_data2$phase - 6) %% 24
+
+    nodes <- nodes_data2 %>%
+      mutate(color = phase_colors[as.character(phase)]) %>%
+      dplyr::select(-phase) %>%
+      left_join(reformatted_clusters, by = "id") %>%
+      group_by(id, label, color) %>%
+      summarize(
+        clusters = list(unique(cluster)),
+        cluster_description = list(unique(cluster_description)),
+        .groups = 'drop')
+
+    merged_nodes <- merge(nodes, gene_info, by.x = "label", by.y = "external_gene_name", all.x = TRUE)
+    merged_nodes <- merged_nodes %>%
+      filter(!duplicated(label))
+
+    node_tooltips <- nodes %>%
+      rowwise() %>%
+      mutate(
+        cluster_info = list(
+          cluster_descriptions %>%
+            filter(cluster %in% unlist(clusters)) %>%
+            dplyr::select(cluster, cluster_description, category)
+        )
+      ) %>%
+      mutate(
+        enrichment_sections = list(character(0)),
+        enrichment_sections = list(
+          if (length(cluster_info) > 0) {
+            categories <- unique(cluster_info$category)
+            sapply(categories, function(cat) {
+              cat_name <- case_when(
+                cat == "Process" ~ "GO Biological Process",
+                cat == "KEGG" ~ "KEGG Pathway",
+                cat == "RCTM" ~ "Reactome",
+                cat == "WikiPathways" ~ "WikiPathways",
+                TRUE ~ cat
+              )
+              cat_terms <- cluster_info %>% filter(category == cat) %>% pull(cluster_description)
+              if(length(cat_terms) > 0) {
+                paste0("<b>", cat_name, ":</b> ", paste(cat_terms, collapse = ", "))
+              } else {
+                character(0)
+              }
+            })
+          } else {
+            character(0)
+          }
+        ),
+        formatted_tooltip = paste(na.omit(unlist(enrichment_sections)), collapse = "<br>")
+      ) %>%
+      dplyr::select(id, formatted_tooltip)
+
+    nodes_with_tooltips <- merged_nodes %>%
+      left_join(node_tooltips, by = "id") %>%
+      mutate(title = paste0("<b>", label, "</b> - ", description,
+                           ifelse(nchar(formatted_tooltip) > 0,
+                                  paste0("<br><br>", formatted_tooltip), ""))) %>%
+      dplyr::select(-c(cluster_description, formatted_tooltip, clusters))
+
+    cluster_for_plot <- cluster_data %>%
+      dplyr::select(cluster = term, genes = preferredNames)
+
+    nodes <- nodes %>% filter(!is.na(id))
+    nodes_with_tooltips <- nodes_with_tooltips %>% filter(!is.na(id))
+
+    save_rds_checked(nodes, file = file.path(out_dir, paste0(tissue_name, "_nodes.rds")))
+    save_string_edges_by_threshold(edges, output_dir = out_dir, prefix = tissue_name)
+    save_rds_checked(nodes_with_tooltips, file = file.path(out_dir, paste0(tissue_name, "_nodes_with_tooltips.rds")))
+    save_rds_checked(cluster_for_plot, file = file.path(out_dir, paste0(tissue_name, "_cluster_for_plot.rds")))
+    save_rds_checked(cluster_descriptions, file = file.path(out_dir, paste0(tissue_name, "_cluster_descriptions.rds")))
+  }
+
+  # --- 5. Plotting data ---
+  cat("Preparing plotting data...\n")
+
+  ct_cols <- paste0("CT", seq(18, 64, by = 2))
+  atlas_plotting <- merged[, c("preferred_symbol", ct_cols)]
+  colnames(atlas_plotting) <- c("Gene", as.character(seq(18, 64, by = 2)))
+
+  qval_df <- merged[, c("preferred_symbol", "BH.Q")]
+  colnames(qval_df) <- c("Gene", "BH.Q")
+
+  atlas_plotting_long <- pivot_longer(atlas_plotting, cols = !Gene, names_to = "time_point", values_to = "mean")
+  atlas_plotting_long <- inner_join(atlas_plotting_long, qval_df, by = "Gene")
+
+  save_rds_checked(atlas_plotting_long, file = file.path(out_dir, paste0(tissue_name, "_data.rds")))
+
+  # --- 6. Display table ---
+  cat("Preparing display table...\n")
+
+  ct_cycle1 <- paste0("CT", seq(18, 40, by = 2))
+  ct_cycle2 <- paste0("CT", seq(42, 64, by = 2))
+
+  dt <- merged
+  for (i in seq_along(ct_cycle1)) {
+    dt[[ct_cycle1[i]]] <- rowMeans(merged[, c(ct_cycle1[i], ct_cycle2[i])])
+  }
+
+  means <- dt[, ct_cycle1]
+  min_val <- apply(means, 1, min)
+  max_val <- apply(means, 1, max)
+  Amp_fc_log2 <- log2(max_val / min_val)
+  Amp_fc <- max_val / min_val
+
+  dt <- cbind(dt, Amp_fc_log2, Amp_fc)
+
+  display_dt <- dt %>%
+    dplyr::select(preferred_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+    dplyr::rename(symbol = preferred_symbol) %>%
+    arrange(BH.Q)
+
+  save_rds_checked(display_dt, file = file.path(out_dir, paste0(tissue_name, "_display_dt.rds")))
+
+  cat("Done:", tissue_name, "\n")
+}
+```
+
+```{r batch_process}
+for (tissue_name in names(tissues)) {
+  tryCatch({
+    process_tissue(
+      raw_data     = tissues[[tissue_name]],
+      tissue_name  = tissue_name,
+      ensembl_mart = ensembl_mart,
+      phase_colors = phase_colors
+    )
+  }, error = function(e) {
+    cat("\nERROR processing", tissue_name, ":", e$message, "\n")
+  })
+}
+```

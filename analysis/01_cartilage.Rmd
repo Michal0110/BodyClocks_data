@@ -1,0 +1,435 @@
+---
+title: "Cartilage circadian processing"
+output: html_document
+---
+
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+library(dplyr)
+library(tidyr)
+library(rain)
+library(biomaRt)
+library(httr)
+library(jsonlite)
+library(STRINGdb)
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse", "cartilage_circ"))
+```
+
+
+```{r load_prepare_cartilage_data}
+wt_data <- read.csv(file = "data/raw/wt_cartilage.csv")
+ko_data <- read.csv(file = "data/raw/ko_cartilage.csv")
+
+# combine the datasets based on the CycID column
+combined <- full_join(wt_data, ko_data, by = "CycID")
+
+#remove the gene.name.y column
+
+combined <- combined[, -which(names(combined) == "gene_name.y")]
+
+combined <- combined[rowMeans(combined[,3:26]) > 50,]
+
+
+
+# Find all duplicates (both first and subsequent occurrences)
+duplicates <- combined$gene_name.x[duplicated(combined$gene_name.x) | duplicated(combined$gene_name.x, fromLast = TRUE)]
+
+# Subset the data frame to include only rows with duplicate gene names
+duplicates_df <- combined[combined$gene_name.x %in% duplicates, c("gene_name.x", "CycID")]
+
+redundant <- c("ENSMUSG00000096262",
+"ENSMUSG00000051412",
+"ENSMUSG00000095742",
+"ENSMUSG00000063897",
+"ENSMUSG00000095041",
+"ENSMUSG00000079834",
+"ENSMUSG00000053935",
+"ENSMUSG00000073617",
+"ENSMUSG00000099250",
+"ENSMUSG00000099021",
+"ENSMUSG00000003178",
+"ENSMUSG00000074661",
+"ENSMUSG00000045365",
+"ENSMUSG00000090663",
+"ENSMUSG00000095832",
+"ENSMUSG00000074140")
+
+# remove rows with redundant gene names
+
+combined <- combined[!combined$CycID %in% redundant,]
+
+# Ensure there are no leading/trailing spaces in the CycID column
+combined$CycID <- trimws(combined$CycID)
+
+
+# change gene name corresponding to CycID
+
+combined$gene_name.x[combined$CycID == "ENSMUSG00000033083"] <- "Tbc1d4"
+
+print(combined$gene_name.x[combined$CycID == "ENSMUSG00000033083"])
+
+combined$gene_name.x[combined$CycID == "ENSMUSG00000078941"] <- "Ak6"
+
+print(combined$gene_name.x[combined$CycID == "ENSMUSG00000078941"])
+
+wt_data_rain <- combined[, 3:14]
+row.names(wt_data_rain) <- combined$CycID
+
+ko_data_rain <- combined[, 15:26]
+row.names(ko_data_rain) <- combined$CycID
+
+column_names <- c( "ZT_18_1", "ZT_22_1", "ZT_02_1", "ZT_06_1", "ZT_10_1", "ZT_14_1", "ZT_18_2", "ZT_22_2", "ZT_02_2", "ZT_06_2", "ZT_10_2", "ZT_14_2")
+colnames(wt_data_rain) <- column_names
+colnames(ko_data_rain) <- column_names
+
+# order columns alphabetically
+wt_data_rain <- wt_data_rain[, order(colnames(wt_data_rain))]
+ko_data_rain <- ko_data_rain[, order(colnames(ko_data_rain))]
+```
+
+
+```{r run_rain_cartilage}
+
+wt_RAIN <- rain(t(wt_data_rain), deltat=4, period=24, measure.sequence = c(2,2,2,2,2,2),
+                peak.border=c(0.3, 0.7), method = "independent", adjp.method='ABH', verbose=TRUE) # independent for mouse sampling, longitudinal can be used for cell culture
+ko_RAIN <- rain(t(ko_data_rain), deltat=4, period=24, measure.sequence = c(2,2,2,2,2,2),
+                peak.border=c(0.3, 0.7), method = "independent", adjp.method='ABH', verbose=TRUE) # independent for mouse sampling, longitudinal can be used for cell culture
+
+p_values_wt <- wt_RAIN$pVal
+
+wt_RAIN$BH.Q <- p.adjust(p_values_wt, method = "BH")
+
+p_values_ko <- ko_RAIN$pVal
+
+ko_RAIN$BH.Q <- p.adjust(p_values_ko, method = "BH")
+```
+
+
+```{r merge_rain_results}
+#create a new column "CycID" from row names in wt_RAIN
+wt_RAIN$CycID <- rownames(wt_RAIN)
+
+wt_data$gene_name[wt_data$CycID == "ENSMUSG00000033083"] <- "Tbc1d4"
+wt_data$gene_name[wt_data$CycID == "ENSMUSG00000078941"] <- "Ak6"
+
+
+wt_cart_circ <- right_join(wt_data, wt_RAIN, by = "CycID") 
+
+
+write.csv(wt_cart_circ, file = "results/tables/wt_cartilage_circ.csv", row.names = F)
+
+ko_RAIN$CycID <- rownames(ko_RAIN)
+
+ko_data$gene_name[ko_data$CycID == "ENSMUSG00000033083"] <- "Tbc1d4"
+ko_data$gene_name[ko_data$CycID == "ENSMUSG00000078941"] <- "Ak6"
+ko_cart_circ <- inner_join(ko_data, ko_RAIN, by = "CycID")
+
+write.csv(ko_cart_circ, file = "results/tables/ko_cartilage_circ.csv", row.names = F)
+```
+
+
+
+
+## App RDS processing (from circ_cartilage_timecourse_bodyclocks.rmd)
+
+```{r annotate_wt_cartilage}
+# Load WT data
+data <- read.csv("results/tables/wt_cartilage_circ.csv")
+
+
+
+# Set up the Ensembl BioMart connection with retry/fallback handling.
+ensembl <- connect_biomart("mmusculus_gene_ensembl")
+
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = data$CycID,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "cartilage_wt_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$preferred_symbol), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+merged <- merge(data, gene_info, by.x = "CycID", by.y = "ensembl_gene_id", all.x = TRUE)
+# If preffered_symbol is NA, copy gene_name to preferred_symbol
+merged$preferred_symbol <- ifelse(is.na(merged$preferred_symbol) | merged$preferred_symbol == "", 
+                                   merged$gene_name, 
+                                   merged$preferred_symbol)
+
+# Re-save wt_cartilage_circ.csv now that annotation columns are available
+write.csv(merged, file = "results/tables/wt_cartilage_circ.csv", row.names = FALSE)
+
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+
+# Get list of gene symbols for STRING API
+#gene_list <- nodes_data$symbol
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$CycID
+
+# Define STRING API base URL
+string_api_url <- "https://string-db.org/api"
+output_format <- "json"  # or tsv
+species_id <- 10090  # Mus musculus (mouse)
+```
+
+```{r define_string_mapping_helpers}
+# Create comprehensive gene mapping dictionary
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$CycID,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+
+
+```
+
+
+```{r build_wt_string_network}
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = 10090,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors
+)
+
+cluster_data <- network_outputs$cluster_data
+cluster_data_export <- cluster_data %>%
+  dplyr::mutate(preferredNames = vapply(preferredNames, paste, character(1), collapse = ","))
+write.csv(cluster_data_export, file = "results/tables/cartilage_enrichment.csv", row.names = FALSE)
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/cartilage_circ",
+  prefix = "cartilage"
+)
+
+```
+
+
+```{r build_cartilage_display_table}
+# Process data frame for plotting in bodyclocks shiny app
+# Table for display
+dt_wt <- merged
+dt_ko <- read.csv("results/tables/ko_cartilage_circ.csv")
+
+dt_wt <- dt_wt %>%
+  mutate(ZT2 = rowMeans(dplyr::select(., c("WT_9AM_3", "WT_9AM_2"))),
+         ZT6 = rowMeans(dplyr::select(., c("WT_1PM_1", "WT_1PM_2"))),
+         ZT10 = rowMeans(dplyr::select(., c("WT_5PM_3", "WT_5PM_2"))),
+         ZT14 = rowMeans(dplyr::select(., c("WT_9PM_3", "WT_9PM_2"))),
+         ZT18 = rowMeans(dplyr::select(., c("WT_1AM_2", "WT_1AM_3"))),
+         ZT22 = rowMeans(dplyr::select(., c("WT_5AM_2", "WT_5AM_3")))
+  )
+
+dt_ko <- dt_ko %>%
+  mutate(ZT2 = rowMeans(dplyr::select(., c("KO_9AM_3", "KO_9AM_2"))),
+         ZT6 = rowMeans(dplyr::select(., c("KO_1PM_1", "KO_1PM_2"))),
+         ZT10 = rowMeans(dplyr::select(., c("KO_5PM_3", "KO_5PM_2"))),
+         ZT14 = rowMeans(dplyr::select(., c("KO_9PM_3", "KO_9PM_2"))),
+         ZT18 = rowMeans(dplyr::select(., c("KO_1AM_2", "KO_1AM_3"))),
+         ZT22 = rowMeans(dplyr::select(., c("KO_5AM_2", "KO_5AM_3")))
+  )
+
+means_wt <- dt_wt[c("ZT2", "ZT6", "ZT10", "ZT14", "ZT18", "ZT22")]
+means_ko <- dt_ko[c("ZT2", "ZT6", "ZT10", "ZT14", "ZT18", "ZT22")]
+
+min_val_wt <- apply(means_wt, 1, min)
+max_val_wt <- apply(means_wt, 1, max)
+
+min_val_ko <- apply(means_ko, 1, min)
+max_val_ko <- apply(means_ko, 1, max)
+
+
+WT_Amp_fc_log2 <- log2(max_val_wt / min_val_wt)
+WT_Amp_fc <- max_val_wt / min_val_wt
+
+KO_Amp_fc_log2 <- log2(max_val_ko / min_val_ko)
+KO_Amp_fc <- max_val_ko / min_val_ko
+
+wt_dt <- cbind(dt_wt, WT_Amp_fc_log2, WT_Amp_fc)
+ko_dt <- cbind(dt_ko, KO_Amp_fc_log2, KO_Amp_fc)
+
+merged_wt_ko <- merge(wt_dt, ko_dt, by = "gene_name", suffixes = c("_wt", "_ko"))
+
+display_dt <- merged_wt_ko %>%
+  dplyr::select(preferred_symbol, description, pVal_wt, BH.Q_wt, pVal_ko, BH.Q_ko, WT_Amp_fc_log2, KO_Amp_fc_log2, phase_wt, phase_ko) %>%
+  dplyr::rename(symbol = preferred_symbol) %>% #gene names have to be in column labeled symbol
+  arrange(BH.Q_wt) 
+
+save_rds_checked(display_dt, file = "results/shiny_data/mouse/cartilage_circ/cartilage_display_dt.rds")
+```
+
+
+```{r build_wt_plot_data}
+
+wt_plotting <- merged[, c("preferred_symbol", "WT_9AM_2", "WT_1PM_1", "WT_5PM_2", "WT_9PM_2", "WT_1AM_3", "WT_5AM_3", "WT_9AM_3", "WT_1PM_2", "WT_5PM_3", "WT_9PM_3", "WT_1AM_2", "WT_5AM_2"
+)]
+new_col_names <- c("Gene", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12")
+colnames(wt_plotting) <- new_col_names
+
+qval_df <- merged[c("preferred_symbol", "BH.Q")]
+new_qval_names <- c("Gene", "BH.Q")
+colnames(qval_df) <- new_qval_names
+
+wt_plotting2 <- pivot_longer(wt_plotting, cols = !Gene, names_to = "time_point", values_to = "mean")
+wt_plotting2 <- inner_join(wt_plotting2, qval_df, by = "Gene")
+save_rds_checked(wt_plotting2, file = "results/shiny_data/mouse/cartilage_circ/cartilage_wt_data.rds")
+
+
+```
+
+
+```{r annotate_ko_cartilage}
+## Same processing for the KO cartilage data
+# Load KO data
+data <- read.csv("results/tables/ko_cartilage_circ.csv")
+
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = data$CycID,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "cartilage_ko_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$preferred_symbol), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+merged <- merge(data, gene_info, by.x = "CycID", by.y = "ensembl_gene_id", all.x = TRUE)
+# If preffered_symbol is NA, copy gene_name to preferred_symbol
+merged$preferred_symbol <- ifelse(is.na(merged$preferred_symbol) | merged$preferred_symbol == "", 
+                                   merged$gene_name, 
+                                   merged$preferred_symbol)
+
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+
+# Get list of gene symbols for STRING API
+#gene_list <- nodes_data$symbol
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$CycID
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$CycID,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+```
+```{r build_ko_string_network}
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = 10090,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors
+)
+
+cluster_data <- network_outputs$cluster_data
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/cartilage_circ",
+  prefix = "ko_cart"
+)
+```
+
+```{r build_ko_plot_data}
+ko_plotting <- merged[, c("preferred_symbol", "KO_9AM_2", "KO_1PM_1", "KO_5PM_2", "KO_9PM_2", "KO_1AM_3", "KO_5AM_3", "KO_9AM_3", "KO_1PM_2", "KO_5PM_3", "KO_9PM_3", "KO_1AM_2", "KO_5AM_2"
+)]
+colnames(ko_plotting) <- new_col_names
+
+qval_Ko_df <- merged[c("preferred_symbol", "BH.Q")]
+new_qval_Ko_names <- c("Gene", "BH.Q")
+colnames(qval_Ko_df) <- new_qval_Ko_names
+
+ko_plotting2 <- pivot_longer(ko_plotting, cols = !Gene, names_to = "time_point", values_to = "mean")
+ko_plotting2 <- inner_join(ko_plotting2, qval_Ko_df, by = "Gene")
+
+save_rds_checked(ko_plotting2, file = "results/shiny_data/mouse/cartilage_circ/cartilage_ko_data.rds")
+```

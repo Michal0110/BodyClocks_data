@@ -1,0 +1,272 @@
+```{r bodyclocks_setup, include=FALSE}
+knitr::opts_knit$set(root.dir = normalizePath(".."))
+source(file.path("..", "R", "io_utils.R"))
+source(file.path("..", "R", "annotation_utils.R"))
+source(file.path("..", "R", "biomart_utils.R"))
+source(file.path("..", "R", "string_utils.R"))
+source(file.path("..", "R", "validation_utils.R"))
+ensure_dir(file.path("..", "results", "tables"))
+ensure_dir(file.path("..", "results", "reports"))
+ensure_dir(file.path("..", "results", "shiny_data", "mouse"))
+ensure_dir(file.path("..", "results", "shiny_data", "baboon"))
+```
+
+
+
+```{r libraries}
+library(dplyr)
+library(tidyr)
+library(DESeq2)
+library(ggplot2)
+library(rain)
+library(biomaRt)
+library(ComplexHeatmap)
+```
+
+```{r load_data_deseq2_normalization}
+# Prepare count matrix and sample table for DESEq2
+sampletable <- read.csv("data/meta/osmo_meta.csv", header=T, sep=",")
+rownames(sampletable) <- sampletable$sample
+count_matrix <- read.delim("data/raw/osmo_raw.csv", header=T, sep=",", row.names=1)
+count_matrix <- count_matrix[rowMeans(count_matrix) >= 50,] # mean 50 reads gene expression cutoff
+
+dds <- DESeqDataSetFromMatrix(countData = count_matrix,
+                              colData = sampletable,
+                              design = ~ timepoint)
+
+dds$timepoint <- factor(dds$timepoint, levels = c("0h",
+                                                    "4h",
+                                                    "8h",
+                                                    "12h",
+                                                    "16h",
+                                                    "20h",
+                                                    "24h",
+                                                    "28h",
+                                                    "32h",
+                                                    "36h",
+                                                    "40h",
+                                                    "44h",
+                                                    "48h"
+                                                    ))
+# Run DESeq2
+dds1 <- DESeq(dds)
+res <- results(dds1, contrast = c("timepoint", "4h", "0h"))
+res_table <- as.data.frame(res)
+rld <- rlog(dds1, blind=FALSE)
+```
+
+
+```{r run_rain}
+# RAIN circadian analaysis
+rain_data <- assay(rld)
+
+rain_data <- subset(rain_data, select = c(X4h_A2, X28h_A8, X4h_B2, X28h_B8, X4h_C2, X28h_C8,
+X8h_A3, X32h_A9, X8h_B3, X32h_B9, X8h_C3, X32h_C9,
+X12h_A4, X36h_A10, X12h_B4, X36h_B10, X12h_C4, X36h_C10,
+X16h_A5, X40h_A11, X16h_B5, X40h_B11, X16h_C5, X40h_C11,
+X20h_A6, X44h_A12, X20h_B6, X44h_B12, X20h_C6, X44h_C12,
+X24h_A7, X48h_A13, X24h_B7, X48h_B13, X24h_C14, X48h_C13))
+
+results <- rain(t(rain_data), deltat=4, period=24, nr.series=6,
+                peak.border=c(0.3, 0.7), method = "longitudinal", adjp.method='ABH', verbose=TRUE)
+```
+
+```{r adjust_pvalues_annotate}
+p_values <- results$pVal
+
+results$BH.Q <- p.adjust(p_values, method = "BH")
+norm_counts <- as.data.frame(counts(dds1, normalized=TRUE))
+norm_counts <- subset(norm_counts, select = -c(X0h_A1, X0h_B1, X0h_C1))
+osm_circ <- merge(norm_counts, results, by = 0, all.x = TRUE)
+
+# Remove .xx from the Row.names column
+osm_circ$Row.names <- gsub("\\..*", "", osm_circ$Row.names)
+
+# Set up the Ensembl BioMart connection
+ensembl <- connect_biomart("mmusculus_gene_ensembl")
+
+# Query Ensembl BioMart to get gene descriptions
+gene_info <- get_biomart_annotation(
+  ids = osm_circ$Row.names,
+  mart = ensembl,
+  attributes = c("ensembl_gene_id", "mgi_symbol", "external_gene_name", "description"),
+  filters = "ensembl_gene_id",
+  cache_key = "osmotic_stress_gene_info"
+)
+
+# Prioritize MGI symbols, fall back to external_gene_name only if needed
+gene_info <- gene_info %>%
+  mutate(preferred_symbol = ifelse(!is.na(mgi_symbol) & mgi_symbol != "", 
+                                  mgi_symbol, 
+                                  external_gene_name))
+
+# Ensure unique entries in gene_info
+gene_info <- gene_info[!duplicated(gene_info$external_gene_name), ]
+
+# Remove text within square brackets, including the brackets themselves
+gene_info$description <- gsub("\\[.*?\\]", "", gene_info$description)
+
+# Trim any trailing whitespace that might be left
+gene_info$description <- trimws(gene_info$description)
+
+merged <- merge(osm_circ, gene_info, by.x = "Row.names", by.y = "ensembl_gene_id", all.x = TRUE)
+write.csv(merged, file = "results/tables/osmo_circ.csv")
+```
+
+```{r prepare_heatmap}
+# Prepare data frame for heatmap
+metadata <- read.csv("data/meta/osmo_meta.csv")
+rownames(metadata) <- metadata$sample
+
+osmo_05 <- subset(merged, BH.Q <= 0.05)
+osmo_05 <- osmo_05[order(osmo_05$phase),]
+rownames(osmo_05) <- osmo_05[,1]
+osmo_05 <- subset(osmo_05, select = -c(Row.names, external_gene_name, description, pVal, phase, peak.shape, period, BH.Q, mgi_symbol, preferred_symbol))
+col_names3 <- c("04h_A2", "08h_A3", "12h_A4", "16h_A5", "20h_A6", "24h_A7", "28h_A8", "32h_A9", "36h_A10", "40h_A11", "44h_A12", "48h_A13", "04h_B2", "08h_B3", "12h_B4", "16h_B5", "20h_B6", "24h_B7", "28h_B8", "32h_B9", "36h_B10","40h_B11", "44h_B12","48h_B13", "04h_C2", "08h_C3", "12h_C4", "16h_C5", "20h_C6", "24h_C14", "28h_C8", "32h_C9", "36h_C10", "40h_C11", "44h_C12", "48h_C13")
+colnames(osmo_05) <- col_names3
+osmo_05 <- osmo_05[, order(names(osmo_05))]
+df1 <- as.matrix(osmo_05)
+scaled_df1 <- t(scale(t(df1)))
+
+chm1 <- Heatmap(scaled_df1, name = "Osmo bhq 0.05", cluster_columns = FALSE, cluster_rows = FALSE, show_row_names = FALSE)
+
+ensure_dir("results/osmo/plots")
+pdf(file = "results/osmo/plots/heatmap_osmo.pdf", width = 10, height = 8)
+draw(chm1)
+dev.off()
+
+ensure_dir("results/publication_figures")
+pdf(file = "results/publication_figures/Fig1B_heatmap_osmo.pdf", width = 10, height = 8)
+draw(chm1)
+dev.off()
+png(file = "results/publication_figures/Fig1B_heatmap_osmo.png", width = 10, height = 8, units = "in", res = 600)
+draw(chm1)
+dev.off()
+
+```
+
+```{r prepare_string_nodes}
+# Get STRING DB interaction data and functional enrichment
+
+nodes_data <- merged %>%
+    filter(BH.Q <= 0.05) %>%
+    dplyr::rename(symbol = preferred_symbol)
+
+
+# Get list of gene symbols for STRING API
+#gene_list <- nodes_data$symbol
+
+# ENSEMBL gene IDs return more results than MGI symbols
+gene_list <- nodes_data$Row.names
+
+species_id <- 10090  # Mus musculus (mouse)
+```
+
+
+```{r prepare_gene_mapping}
+# Create comprehensive gene mapping dictionary
+
+# Create the mapping using your existing data
+gene_mapping <- create_gene_mapping(
+  gene_ids = merged$Row.names,
+  symbols = nodes_data$symbol
+)
+
+cat("Created mapping for", length(gene_mapping), "genes\n")
+
+
+```
+
+
+
+```{r build_string_network}
+# Get protein-protein interactions and functional enrichment.
+network_bundle <- get_string_network_bundle(
+  gene_list = gene_list,
+  gene_mapping = gene_mapping,
+  species_id = species_id,
+  nodes_data = nodes_data
+)
+edges <- network_bundle$edges_by_threshold
+cluster_data <- network_bundle$cluster_data
+
+phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
+
+network_outputs <- build_string_network_outputs(
+  cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors)
+
+cluster_data <- network_outputs$cluster_data
+cluster_data_export <- cluster_data %>%
+  dplyr::mutate(preferredNames = vapply(preferredNames, paste, character(1), collapse = ","))
+write.csv(cluster_data_export, file = "results/tables/osmo_enrichment.csv", row.names = FALSE)
+nodes <- network_outputs$nodes
+nodes_with_tooltips <- network_outputs$nodes_with_tooltips
+cluster_for_plot <- network_outputs$cluster_for_plot
+cluster_descriptions <- network_outputs$cluster_descriptions
+
+save_string_network_outputs(
+  outputs = network_outputs,
+  edges = edges,
+  output_dir = "results/shiny_data/mouse/osmo",
+  prefix = "osmo"
+)
+```
+
+```{r prepare_timeseries_data}
+# Prepare data frame for plotting
+
+df <- subset(merged, select = -c(Row.names, pVal, phase, peak.shape, period, BH.Q, external_gene_name, description, preferred_symbol))
+col_names2 <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12","Gene")
+colnames(df) <- col_names2
+data <- pivot_longer(df, cols = !Gene, names_to = "time_point", values_to = "reads")
+
+qval_df <- merged[c("mgi_symbol", "BH.Q")]
+new_pval_names <- c("Gene", "BH.Q")
+colnames(qval_df) <- new_pval_names
+
+data <- data[order(data$time_point),]
+
+mean_data <- aggregate(reads ~ Gene + time_point, data, mean)
+sd_data <- aggregate(reads ~ Gene + time_point, data, sd)
+mean_sd <- merge(mean_data, sd_data, by = c("Gene", "time_point"))
+names <- c("Gene", "time_point", "mean", "sd")
+colnames(mean_sd) <- names
+mean_sd <- inner_join(mean_sd, qval_df, by = "Gene")
+save_rds_checked(mean_sd, file = "results/shiny_data/mouse/osmo/osmo_data.rds")
+
+```
+
+```{r compute_amplitude_display_table}
+# Prepare data frame for display
+
+dt <- merged %>%
+  mutate(ZT4 = rowMeans(dplyr::select(., c("X4h_A2", "X28h_A8", "X4h_B2", "X28h_B8", "X4h_C2", "X28h_C8"))),
+         ZT8 = rowMeans(dplyr::select(., c("X8h_A3", "X32h_A9", "X8h_B3", "X32h_B9", "X8h_C3", "X32h_C9"))),
+         ZT12 = rowMeans(dplyr::select(., c("X12h_A4", "X36h_A10", "X12h_B4", "X36h_B10", "X12h_C4", "X36h_C10"))),
+         ZT16 = rowMeans(dplyr::select(., c("X16h_A5", "X40h_A11", "X16h_B5", "X40h_B11", "X16h_C5", "X40h_C11"))),
+         ZT20 = rowMeans(dplyr::select(., c("X20h_A6", "X44h_A12", "X20h_B6", "X44h_B12", "X20h_C6", "X44h_C12"))),
+         ZT24 = rowMeans(dplyr::select(., c("X24h_A7", "X48h_A13", "X24h_B7", "X48h_B13", "X24h_C14", "X48h_C13")))
+  )
+
+means <- dt[c("ZT4", "ZT8", "ZT12", "ZT16", "ZT20", "ZT24")]
+
+min_val <- apply(means, 1, min)
+max_val <- apply(means, 1, max)
+
+Amp_fc_log2 <- log2(max_val / min_val)
+Amp_fc <- max_val / min_val
+
+dt <- cbind(dt, Amp_fc_log2, Amp_fc)
+
+
+display_dt <- dt %>%
+  dplyr::select(mgi_symbol, description, pVal, BH.Q, Amp_fc_log2, phase) %>%
+  dplyr::rename(symbol = mgi_symbol) %>%
+  arrange(BH.Q)
+
+save_rds_checked(display_dt, file = "results/shiny_data/mouse/osmo/osmo_display_dt.rds")
+```

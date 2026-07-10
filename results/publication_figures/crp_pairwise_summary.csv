@@ -1,0 +1,7 @@
+"pair","dataset1","dataset2","n_shared_genes","n_clock_controlled","pct_clock_controlled","threshold_h","perm_null_mean_pct","perm_null_sd_pct","perm_p_value","perm_p_BH"
+"Osmo_vs_Dex","Osmo","Dex",144,83,57.6,4,50.9,3.97,0.057,0.0855
+"Osmo_vs_HS","Osmo","HS",370,129,34.9,4,48.9,2.44,1,1
+"Osmo_vs_Cartilage","Osmo","Cartilage",102,50,49,4,54.3,4.61,0.903,1
+"Dex_vs_HS","Dex","HS",905,507,56,4,47.4,1.67,0,0
+"Dex_vs_Cartilage","Dex","Cartilage",271,176,64.9,4,52.3,2.77,0,0
+"HS_vs_Cartilage","HS","Cartilage",685,450,65.7,4,51.3,1.8,0,0

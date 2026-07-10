@@ -1,0 +1,38 @@
+*:Zone.Identifier
+results/*
+!results/publication_figures/
+!results/publication_figures/**
+*.html
+*.nb.html
+.Rhistory
+.RData
+.Rproj.user/
+.vscode/
+*.Rproj
+.Ruserdata
+
+# Local machine/agent notes
+docs/agent_notes.md
+
+# renv local package/library state
+renv/library/
+renv/staging/
+renv/local/
+renv/sandbox/
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+*~
+*.tmp
+*.bak
+
+# Generated environment diagnostics
+docs/renv_diagnostics.txt
+docs/sessionInfo.txt
+docs/conda_from_history.yml
+
+# Old analysis scripts
+docs/original_scripts
+
+nucleic_acids_res_draft.md
