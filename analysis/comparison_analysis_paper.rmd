@@ -18,6 +18,7 @@ library(tidyr)
 library(tibble)
 library(ggrepel)
 library(forcats)
+library(Matrix)
 ```
 
 ```{r load_data}
@@ -177,34 +178,431 @@ circ_dist_24 <- function(a, b) {
   ifelse(d > 12, 24 - d, d)
 }
 
-# ── Helper: enrichment term overlap ─────────────────────────────────────────
-compare_enrichment_overlap <- function(enrich1, enrich2, name1, name2,
-                                       category_filter, universe_size) {
-  e1 <- enrich1 %>% filter(category == category_filter)
-  e2 <- enrich2 %>% filter(category == category_filter)
-  if (nrow(e1) == 0 || nrow(e2) == 0)
-    return(list(overlap = 0, size1 = nrow(e1), size2 = nrow(e2),
-                overlap_terms = character(0), p_value = 1, fold_enrichment = 0,
-                jaccard = 0, expected = 0, dataset1 = name1, dataset2 = name2,
-                category = category_filter))
-  terms1         <- e1$description
-  terms2         <- e2$description
-  overlap_terms  <- intersect(terms1, terms2)
-  overlap_count  <- length(overlap_terms)
-  size1          <- length(terms1)
-  size2          <- length(terms2)
-  expected       <- (size1 * size2) / universe_size
-  fold_enrichment <- ifelse(expected > 0, overlap_count / expected, 0)
-  p_value        <- phyper(overlap_count - 1, size1, universe_size - size1,
-                           size2, lower.tail = FALSE)
-  list(dataset1 = name1, dataset2 = name2, category = category_filter,
-       size1 = size1, size2 = size2, overlap = overlap_count,
-       expected = expected, fold_enrichment = fold_enrichment,
-       jaccard = overlap_count / length(union(terms1, terms2)),
-       p_value = p_value, overlap_terms = overlap_terms)
+# ── Helpers: local pathway enrichment and overlap permutation ────────────────
+normalise_ensembl_gene_ids <- function(x) {
+  x <- sub("[.][0-9]+$", "", trimws(as.character(x)))
+  x[is.na(x) | !nzchar(x)] <- NA_character_
+  x
 }
 
+resolve_reference_file <- function(filename, url, existing_paths = character(),
+                                   cache_dir = file.path(
+                                     "results", "cache", "pathway_annotations"
+                                   )) {
+  cache_path <- file.path(cache_dir, filename)
+  candidates <- unique(c(
+    existing_paths,
+    file.path("data", "raw", filename),
+    cache_path
+  ))
+  available <- candidates[file.exists(candidates)]
+  if (length(available) > 0) {
+    message("Using cached reference: ", available[[1]])
+    return(available[[1]])
+  }
+
+  dir.create(cache_dir, recursive = TRUE, showWarnings = FALSE)
+  partial_path <- paste0(cache_path, ".part")
+  if (file.exists(partial_path)) unlink(partial_path)
+  on.exit(if (file.exists(partial_path)) unlink(partial_path), add = TRUE)
+
+  message("Downloading reference data from ", url)
+  status <- tryCatch(
+    download.file(
+      url,
+      destfile = partial_path,
+      method = "libcurl",
+      mode = "wb",
+      quiet = FALSE
+    ),
+    error = function(e) {
+      stop(
+        "Unable to download required reference file ", filename, ": ",
+        conditionMessage(e),
+        call. = FALSE
+      )
+    }
+  )
+  download_size <- if (file.exists(partial_path)) {
+    file.info(partial_path)$size
+  } else {
+    NA_real_
+  }
+  if (!isTRUE(status == 0) || is.na(download_size) || download_size <= 0) {
+    stop("Download failed or returned an empty file: ", url, call. = FALSE)
+  }
+  if (!file.rename(partial_path, cache_path)) {
+    stop("Could not move downloaded reference into cache: ", cache_path,
+         call. = FALSE)
+  }
+  message("Cached reference at ", cache_path)
+  cache_path
+}
+
+read_filtered_tsv_gz <- function(path, pattern, column_names,
+                                 chunk_size = 100000L) {
+  if (!file.exists(path)) {
+    stop("Required annotation file not found: ", path, call. = FALSE)
+  }
+
+  con <- gzfile(path, open = "rt")
+  on.exit(close(con), add = TRUE)
+  readLines(con, n = 1L)  # discard header
+  pieces <- list()
+
+  repeat {
+    lines <- readLines(con, n = chunk_size)
+    if (length(lines) == 0) break
+    lines <- lines[grepl(pattern, lines)]
+    if (length(lines) == 0) next
+
+    text_con <- textConnection(lines)
+    piece <- read.delim(
+      text_con,
+      header = FALSE, sep = "\t", quote = "", comment.char = "",
+      col.names = column_names,
+      stringsAsFactors = FALSE
+    )
+    close(text_con)
+    pieces[[length(pieces) + 1L]] <- piece
+  }
+
+  if (length(pieces) == 0) {
+    return(as.data.frame(
+      setNames(replicate(length(column_names), character(0), simplify = FALSE),
+               column_names),
+      stringsAsFactors = FALSE
+    ))
+  }
+  bind_rows(pieces)
+}
+
+build_pathway_model <- function(annotation_map, background_genes,
+                                category_code, min_term_size = 5L) {
+  background_genes <- unique(na.omit(
+    normalise_ensembl_gene_ids(background_genes)
+  ))
+
+  ann <- annotation_map %>%
+    filter(category == category_code, gene_id %in% background_genes) %>%
+    distinct(gene_id, term, .keep_all = TRUE)
+
+  term_info <- ann %>%
+    group_by(term) %>%
+    summarise(
+      description = first(description),
+      term_size = n_distinct(gene_id),
+      .groups = "drop"
+    ) %>%
+    filter(term_size >= min_term_size) %>%
+    arrange(term)
+
+  if (nrow(term_info) == 0) {
+    stop("No eligible terms for category ", category_code, call. = FALSE)
+  }
+
+  ann <- ann %>% semi_join(term_info, by = "term")
+  gene_index <- match(ann$gene_id, background_genes)
+  term_index <- match(ann$term, term_info$term)
+
+  incidence <- Matrix::sparseMatrix(
+    i = gene_index,
+    j = term_index,
+    x = 1L,
+    dims = c(length(background_genes), nrow(term_info)),
+    dimnames = list(background_genes, term_info$term)
+  )
+
+  list(
+    category = category_code,
+    background = background_genes,
+    background_size = length(background_genes),
+    gene_index = setNames(seq_along(background_genes), background_genes),
+    term_ids = term_info$term,
+    descriptions = term_info$description,
+    term_sizes = term_info$term_size,
+    incidence = incidence
+  )
+}
+
+calculate_local_enrichment <- function(selected_genes, model) {
+  selected_genes <- intersect(unique(selected_genes), model$background)
+  selected_index <- unname(model$gene_index[selected_genes])
+  n_selected <- length(selected_index)
+
+  hits <- if (n_selected > 0) {
+    as.numeric(Matrix::colSums(model$incidence[selected_index, , drop = FALSE]))
+  } else {
+    numeric(length(model$term_ids))
+  }
+
+  p_value <- rep(1, length(model$term_ids))
+  has_hits <- hits > 0
+  if (n_selected > 0 && any(has_hits)) {
+    p_value[has_hits] <- phyper(
+      hits[has_hits] - 1,
+      model$term_sizes[has_hits],
+      model$background_size - model$term_sizes[has_hits],
+      n_selected,
+      lower.tail = FALSE
+    )
+  }
+
+  list(
+    n_selected = n_selected,
+    hits = hits,
+    p_value = p_value,
+    fdr = p.adjust(p_value, method = "BH")
+  )
+}
+
+format_local_enrichment <- function(selected_genes, model, fdr_cutoff = 0.05) {
+  stats <- calculate_local_enrichment(selected_genes, model)
+  keep <- stats$hits > 0 & stats$fdr <= fdr_cutoff
+  n_keep <- sum(keep)
+
+  data.frame(
+    category = rep(model$category, n_keep),
+    term = model$term_ids[keep],
+    number_of_genes = stats$hits[keep],
+    number_of_genes_in_background = model$term_sizes[keep],
+    p_value = stats$p_value[keep],
+    fdr = stats$fdr[keep],
+    description = model$descriptions[keep],
+    stringsAsFactors = FALSE
+  ) %>% arrange(fdr, p_value, term)
+}
+
+get_top_local_terms <- function(selected_genes, model, n_terms) {
+  if (n_terms <= 0) return(character(0))
+  stats <- calculate_local_enrichment(selected_genes, model)
+  n_terms <- min(as.integer(n_terms), length(model$term_ids))
+
+  # Random tie-breaking avoids repeatedly selecting the same term identifiers
+  # when null enrichment P-values are equal.
+  ranked <- order(stats$p_value, runif(length(stats$p_value)))
+  model$term_ids[ranked[seq_len(n_terms)]]
+}
+
+term_jaccard <- function(terms1, terms2) {
+  union_size <- length(union(terms1, terms2))
+  if (union_size == 0) return(0)
+  length(intersect(terms1, terms2)) / union_size
+}
+
+conditional_term_overlap_p <- function(universe_size, size1, size2, overlap) {
+  if (overlap <= 0) return(1)
+  phyper(
+    overlap - 1,
+    size1,
+    universe_size - size1,
+    size2,
+    lower.tail = FALSE
+  )
+}
+
+sample_gene_pair_fixed_sizes <- function(background_genes, size1, size2) {
+  if (max(size1, size2) > length(background_genes)) {
+    stop("Requested gene-set size exceeds the permutation background.",
+         call. = FALSE)
+  }
+
+  list(
+    set1 = sample(background_genes, size1, replace = FALSE),
+    set2 = sample(background_genes, size2, replace = FALSE)
+  )
+}
 # ── Helper: enrichment tile heatmap ─────────────────────────────────────────
+# ── Helpers: pathway-background sensitivity analyses ────────────────────
+build_pathway_models <- function(annotation_map, background_genes, categories,
+                                 category_names, min_term_size = 5L) {
+  models <- setNames(lapply(categories, function(cat_code) {
+    model <- build_pathway_model(
+      annotation_map,
+      background_genes,
+      cat_code,
+      min_term_size = min_term_size
+    )
+    cat(category_names[[cat_code]], ":", length(model$term_ids),
+        "eligible terms\n")
+    model
+  }), categories)
+  models
+}
+
+calculate_enrichment_lists <- function(gene_sets, pathway_models, categories,
+                                       fdr_cutoff = 0.05) {
+  setNames(lapply(names(gene_sets), function(ds_name) {
+    bind_rows(lapply(categories, function(cat_code) {
+      format_local_enrichment(
+        gene_sets[[ds_name]],
+        pathway_models[[cat_code]],
+        fdr_cutoff = fdr_cutoff
+      )
+    }))
+  }), names(gene_sets))
+}
+
+format_enrichment_collection <- function(enrichment_list,
+                                         background_strategy,
+                                         background_description,
+                                         pair_context,
+                                         background_size) {
+  bind_rows(lapply(names(enrichment_list), function(ds_name) {
+    x <- enrichment_list[[ds_name]]
+    n <- nrow(x)
+    bind_cols(
+      data.frame(
+        Background_Strategy = rep(background_strategy, n),
+        Background_Description = rep(background_description, n),
+        Pair_Context = rep(pair_context, n),
+        Background_Genes = rep(background_size, n),
+        dataset = rep(ds_name, n),
+        stringsAsFactors = FALSE
+      ),
+      x
+    )
+  }))
+}
+
+run_pathway_overlap_pair <- function(
+    background_strategy, background_description, pair,
+    background_genes, gene_sets, enrichment_list, pathway_models,
+    categories, category_names, n_permutations, permutation_seed) {
+  name1 <- pair[1]
+  name2 <- pair[2]
+  pair_label <- paste(name1, name2, sep = "_vs_")
+  genes1 <- gene_sets[[name1]]
+  genes2 <- gene_sets[[name2]]
+  n_shared_genes <- length(intersect(genes1, genes2))
+  results <- data.frame()
+
+  for (cat_index in seq_along(categories)) {
+    cat_code <- categories[[cat_index]]
+    model <- pathway_models[[cat_code]]
+    terms1 <- enrichment_list[[name1]] %>%
+      filter(category == cat_code) %>%
+      pull(term)
+    terms2 <- enrichment_list[[name2]] %>%
+      filter(category == cat_code) %>%
+      pull(term)
+    overlap_term_ids <- intersect(terms1, terms2)
+    observed_jaccard <- term_jaccard(terms1, terms2)
+
+    cat(sprintf(
+      "[%s] Permuting %s, %s vs %s: %d genes, %d genes, %d shared\n",
+      background_strategy, category_names[[cat_code]], name1, name2,
+      length(genes1), length(genes2), n_shared_genes
+    ))
+
+    # Draw two independent gene sets of the observed sizes. This
+    # allows their gene-level intersection to vary and tests total pathway-term
+    # overlap arising from both co-rhythmic genes and functional convergence.
+    size_only_seed <- permutation_seed + cat_index - 1L
+    set.seed(size_only_seed)
+    perm_stats <- replicate(n_permutations, {
+      perm_genes <- sample_gene_pair_fixed_sizes(
+        background_genes, length(genes1), length(genes2)
+      )
+      perm_terms1 <- get_top_local_terms(
+        perm_genes$set1, model, length(terms1)
+      )
+      perm_terms2 <- get_top_local_terms(
+        perm_genes$set2, model, length(terms2)
+      )
+      c(
+        jaccard = term_jaccard(perm_terms1, perm_terms2),
+        overlap = length(intersect(perm_terms1, perm_terms2)),
+        shared_genes = length(intersect(perm_genes$set1, perm_genes$set2))
+      )
+    })
+
+    n_as_or_more_extreme <- sum(
+      perm_stats["jaccard", ] >= observed_jaccard
+    )
+    perm_p_value <- (n_as_or_more_extreme + 1) /
+      (n_permutations + 1)
+
+    conditional_hypergeom_p <- conditional_term_overlap_p(
+      length(model$term_ids), length(terms1), length(terms2),
+      length(overlap_term_ids)
+    )
+    overlap_descriptions <- model$descriptions[
+      match(overlap_term_ids, model$term_ids)
+    ]
+
+    results <- bind_rows(
+      results,
+      data.frame(
+        Background_Strategy = background_strategy,
+        Background_Description = background_description,
+        Pair = pair_label,
+        Category = category_names[[cat_code]],
+        Dataset1 = name1,
+        Dataset2 = name2,
+        Background_Genes = length(background_genes),
+        Rhythmic_Genes_D1 = length(genes1),
+        Rhythmic_Genes_D2 = length(genes2),
+        Shared_Rhythmic_Genes = n_shared_genes,
+        Eligible_Terms = length(model$term_ids),
+        Enriched_Terms_D1 = length(terms1),
+        Enriched_Terms_D2 = length(terms2),
+        Overlap = length(overlap_term_ids),
+        Jaccard_Index = observed_jaccard,
+        Perm_Null_Mean_Jaccard = mean(perm_stats["jaccard", ]),
+        Perm_Null_SD_Jaccard = sd(perm_stats["jaccard", ]),
+        Perm_Null_P025_Jaccard = unname(quantile(
+          perm_stats["jaccard", ], 0.025
+        )),
+        Perm_Null_P975_Jaccard = unname(quantile(
+          perm_stats["jaccard", ], 0.975
+        )),
+        Perm_Null_Mean_Overlap = mean(perm_stats["overlap", ]),
+        Perm_Null_Mean_Shared_Genes = mean(perm_stats["shared_genes", ]),
+        Perm_P_value = perm_p_value,
+        Conditional_Hypergeom_P_value = conditional_hypergeom_p,
+        N_Perm_As_Or_More_Extreme = n_as_or_more_extreme,
+        N_Permutations = n_permutations,
+        Size_Only_Seed = size_only_seed,
+        Percent_of_D1 = 100 * length(overlap_term_ids) /
+          max(length(terms1), 1),
+        Percent_of_D2 = 100 * length(overlap_term_ids) /
+          max(length(terms2), 1),
+        Overlap_Terms = paste(
+          sprintf("%s (%s)", overlap_term_ids, overlap_descriptions),
+          collapse = "; "
+        ),
+        stringsAsFactors = FALSE
+      )
+    )
+  }
+
+  results
+}
+
+adjust_pathway_overlap_p_values <- function(results) {
+  results %>%
+    group_by(Background_Strategy) %>%
+    mutate(
+      Perm_P_BH = p.adjust(Perm_P_value, method = "BH"),
+      Significant_Perm_BH = ifelse(Perm_P_BH < 0.05, "Yes", "No"),
+      Conditional_Hypergeom_P_BH = p.adjust(
+        Conditional_Hypergeom_P_value, method = "BH"
+      ),
+      Significant_Conditional_BH = ifelse(
+        Conditional_Hypergeom_P_BH < 0.05, "Yes", "No"
+      )
+    ) %>%
+    ungroup() %>%
+    relocate(Perm_P_BH, .after = Perm_P_value) %>%
+    relocate(Significant_Perm_BH, .after = Perm_P_BH) %>%
+    relocate(Conditional_Hypergeom_P_BH,
+             .after = Conditional_Hypergeom_P_value) %>%
+    relocate(Significant_Conditional_BH,
+             .after = Conditional_Hypergeom_P_BH)
+}
+
+# ── Helper: enrichment tile heatmap ────────────────────────────────────────
 make_tile_heatmap <- function(data, cat) {
   all_terms    <- data %>% filter(category_label == cat) %>% pull(description) %>% unique()
   all_datasets <- c("Osmo", "Dex", "HS", "Cartilage")
@@ -862,81 +1260,400 @@ ggsave("results/publication_figures/Fig2B_pairwise_CRP_comparison.png",
 ```
 
 ```{r enrichment_supp_table4}
-# ── Load pre-computed enrichment CSVs ────────────────────────────────────────
-osmo_enrichment      <- read.csv("results/tables/osmo_enrichment.csv")
-dex_enrichment       <- read.csv("results/tables/dex_enrichment.csv")
-hs_enrichment        <- read.csv("results/tables/hs_enrichment.csv")
-cartilage_enrichment <- read.csv("results/tables/cartilage_enrichment.csv")
+# ── Load frozen local pathway annotations ────────────────────────────────────
+categories <- c("KEGG", "RCTM", "WikiPathways")
+category_names <- c(
+  KEGG = "KEGG Pathways",
+  RCTM = "Reactome",
+  WikiPathways = "WikiPathways"
+)
+min_pathway_size <- 5L
+pathway_fdr_cutoff <- 0.05
 
-enrichment_list <- list(
-  Osmo      = osmo_enrichment,
-  Dex       = dex_enrichment,
-  HS        = hs_enrichment,
-  Cartilage = cartilage_enrichment
+string_terms_path <- resolve_reference_file(
+  "10090.protein.enrichment.terms.v12.0.txt.gz",
+  paste0(
+    "https://stringdb-downloads.org/download/",
+    "protein.enrichment.terms.v12.0/",
+    "10090.protein.enrichment.terms.v12.0.txt.gz"
+  )
+)
+string_aliases_path <- resolve_reference_file(
+  "10090.protein.aliases.v12.0.txt.gz",
+  paste0(
+    "https://stringdb-downloads.org/download/protein.aliases.v12.0/",
+    "10090.protein.aliases.v12.0.txt.gz"
+  ),
+  existing_paths = "results/cache/stringdb/10090.protein.aliases.v12.0.txt.gz"
+)
+kegg_pathway_names_path <- resolve_reference_file(
+  "mmu_kegg_pathway_names_raw.tsv",
+  "https://rest.kegg.jp/list/pathway/mmu"
+)
+kegg_pathway_genes_path <- resolve_reference_file(
+  "mmu_kegg_pathway_genes_raw.tsv",
+  "https://rest.kegg.jp/link/mmu/pathway"
 )
 
-categories      <- c("KEGG", "Process", "RCTM", "WikiPathways")
-category_names  <- c("KEGG Pathways", "GO Biological Process", "Reactome", "WikiPathways")
+string_terms <- read_filtered_tsv_gz(
+  string_terms_path,
+  pattern = "\t(Reactome Pathways|WikiPathways)\t",
+  column_names = c(
+    "string_protein_id", "string_category", "term", "description"
+  )
+)
 
-# ── Pairwise enrichment term overlaps ────────────────────────────────────────
-enrichment_overlap_results <- data.frame()
+string_aliases <- read_filtered_tsv_gz(
+  string_aliases_path,
+  pattern = "\t(Ensembl_gene|KEGG_GENEID)$",
+  column_names = c("string_protein_id", "alias", "source")
+)
 
-for (cat_idx in seq_along(categories)) {
-  cat_code <- categories[cat_idx]
-  cat_name <- category_names[cat_idx]
+# Collapse protein isoforms to unique Ensembl gene-to-term relationships.
+protein_gene_map <- string_aliases %>%
+  filter(source == "Ensembl_gene", grepl("^ENSMUSG", alias)) %>%
+  transmute(
+    string_protein_id,
+    gene_id = normalise_ensembl_gene_ids(alias)
+  ) %>%
+  filter(!is.na(gene_id)) %>%
+  distinct()
 
-  all_terms_cat <- unique(unlist(lapply(enrichment_list, function(e)
-    e %>% filter(category == cat_code) %>% pull(description))))
-  universe_size <- length(all_terms_cat)
+string_annotation_map <- string_terms %>%
+  filter(string_category %in% c("Reactome Pathways", "WikiPathways")) %>%
+  inner_join(protein_gene_map, by = "string_protein_id") %>%
+  transmute(
+    gene_id,
+    category = recode(
+      string_category,
+      "Reactome Pathways" = "RCTM",
+      "WikiPathways" = "WikiPathways"
+    ),
+    term,
+    description
+  ) %>%
+  distinct()
 
-  for (i in 1:(n_datasets - 1)) {
-    for (j in (i + 1):n_datasets) {
-      name1 <- dataset_names[i]
-      name2 <- dataset_names[j]
-      res   <- compare_enrichment_overlap(
-        enrichment_list[[name1]], enrichment_list[[name2]],
-        name1, name2, cat_code, universe_size)
+kegg_pathway_genes <- read.delim(
+  kegg_pathway_genes_path,
+  header = FALSE, sep = "\t", quote = "", comment.char = "",
+  col.names = c("pathway_id", "kegg_gene_id"),
+  stringsAsFactors = FALSE
+) %>%
+  transmute(
+    term = sub("^path:", "", pathway_id),
+    ncbi_gene_id = sub("^mmu:", "", kegg_gene_id)
+  ) %>%
+  distinct()
 
-      if (res$overlap > 0 || (res$size1 > 0 && res$size2 > 0)) {
-        enrichment_overlap_results <- rbind(enrichment_overlap_results, data.frame(
-          Category        = cat_name,
-          Dataset1        = name1,
-          Dataset2        = name2,
-          Size1           = res$size1,
-          Size2           = res$size2,
-          Overlap         = res$overlap,
-          Expected        = round(res$expected, 2),
-          Fold_Enrichment = round(res$fold_enrichment, 2),
-          Jaccard_Index   = round(res$jaccard, 3),
-          P_value         = format(res$p_value, scientific = TRUE, digits = 3),
-          Significant     = ifelse(res$p_value < 0.05, "Yes", "No"),
-          Percent_of_D1   = round(100 * res$overlap / max(res$size1, 1), 1),
-          Percent_of_D2   = round(100 * res$overlap / max(res$size2, 1), 1),
-          stringsAsFactors = FALSE
-        ))
-      }
-    }
-  }
+kegg_pathway_names <- read.delim(
+  kegg_pathway_names_path,
+  header = FALSE, sep = "\t", quote = "", comment.char = "",
+  col.names = c("term", "description"),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(description = sub(
+    " - Mus musculus \\(house mouse\\)$", "", description
+  )) %>%
+  distinct(term, .keep_all = TRUE)
+
+kegg_protein_map <- string_aliases %>%
+  filter(source == "KEGG_GENEID") %>%
+  transmute(string_protein_id, ncbi_gene_id = alias) %>%
+  distinct()
+
+kegg_annotation_map <- kegg_pathway_genes %>%
+  inner_join(kegg_protein_map, by = "ncbi_gene_id") %>%
+  inner_join(protein_gene_map, by = "string_protein_id") %>%
+  inner_join(kegg_pathway_names, by = "term") %>%
+  transmute(gene_id, category = "KEGG", term, description) %>%
+  distinct()
+
+pathway_annotation_map <- bind_rows(
+  kegg_annotation_map,
+  string_annotation_map
+) %>%
+  distinct(gene_id, category, term, .keep_all = TRUE)
+
+# Normalize the tested and rhythmic gene sets once for the two retained
+# background strategies.
+normalised_gene_universes <- lapply(
+  gene_universes,
+  function(x) unique(na.omit(normalise_ensembl_gene_ids(x)))
+)
+mapped_genes <- unique(na.omit(protein_gene_map$gene_id))
+normalised_rhythmic_genes <- lapply(
+  gene_lists,
+  function(x) unique(na.omit(normalise_ensembl_gene_ids(x)))
+)
+
+if (length(mapped_genes) == 0) {
+  stop("No mouse Ensembl genes were mapped through STRING aliases.",
+       call. = FALSE)
 }
 
-write.csv(enrichment_overlap_results,
-          "results/publication_figures/Supplementary_table_4.csv",
-          row.names = FALSE)
-cat("Supplementary_table_4.csv saved.\n")
-print(enrichment_overlap_results)
+# ── Permutation tests of enriched-term Jaccard overlap ──────────────────
+# Observed enrichment uses BH-adjusted P <= 0.05. The permutation null retains
+# the top N terms ranked by raw enrichment P-value, where N equals the observed
+# enriched-list size. This conditions the overlap test on list size even when a
+# random gene set would yield no FDR-significant terms.
+n_perm_enrichment <- 1000L
+
+# ── Background sensitivity analyses ─────────────────────────────────────
+strategy_descriptions <- c(
+  pair_specific_common =
+    "Genes tested in both datasets in each pair and mapped to STRING",
+  all_mouse = "All mouse genes mapped to STRING"
+)
+strategy_seeds <- c(
+  pair_specific_common = 43000L,
+  all_mouse = 44000L
+)
+# Pair-specific base seeds are spaced by 10. Within each pair, category offsets
+# 0/1/2 give each permutation an independently reproducible random-number stream.
+
+
+# Primary analysis: for each comparison, enrich both rhythmic gene sets against
+# genes tested in that pair. A dataset can therefore have different enriched
+# terms in different pairwise contexts.
+cat("\n=== PAIR-SPECIFIC COMMON BACKGROUNDS ===\n")
+pair_specific_enrichment_outputs <- list()
+pair_specific_overlap_outputs <- list()
+
+for (pair_index in seq_along(ds_pairs)) {
+  pair <- ds_pairs[[pair_index]]
+  name1 <- pair[1]
+  name2 <- pair[2]
+  pair_label <- paste(name1, name2, sep = "_vs_")
+  pair_background <- Reduce(
+    intersect,
+    normalised_gene_universes[c(name1, name2)]
+  )
+  pair_background <- intersect(pair_background, mapped_genes)
+
+  if (length(pair_background) == 0) {
+    stop("No common STRING-mapped genes for pair ", pair_label,
+         call. = FALSE)
+  }
+
+  cat("\n", pair_label, " background: ", length(pair_background),
+      " genes\n", sep = "")
+  pair_gene_sets <- setNames(lapply(c(name1, name2), function(ds_name) {
+    intersect(normalised_rhythmic_genes[[ds_name]], pair_background)
+  }), c(name1, name2))
+  pair_models <- build_pathway_models(
+    pathway_annotation_map,
+    pair_background,
+    categories,
+    category_names,
+    min_term_size = min_pathway_size
+  )
+  pair_enrichment_list <- calculate_enrichment_lists(
+    pair_gene_sets,
+    pair_models,
+    categories,
+    fdr_cutoff = pathway_fdr_cutoff
+  )
+
+  pair_specific_enrichment_outputs[[pair_label]] <-
+    format_enrichment_collection(
+      pair_enrichment_list,
+      "pair_specific_common",
+      strategy_descriptions[["pair_specific_common"]],
+      pair_label,
+      length(pair_background)
+    )
+  pair_specific_overlap_outputs[[pair_label]] <- run_pathway_overlap_pair(
+    "pair_specific_common",
+    strategy_descriptions[["pair_specific_common"]],
+    pair,
+    pair_background,
+    pair_gene_sets,
+    pair_enrichment_list,
+    pair_models,
+    categories,
+    category_names,
+    n_perm_enrichment,
+    strategy_seeds[["pair_specific_common"]] + 10L * pair_index
+  )
+}
+
+pair_specific_enrichment_output <- bind_rows(
+  pair_specific_enrichment_outputs
+)
+pair_specific_overlap_results <- bind_rows(pair_specific_overlap_outputs)
+
+# Sensitivity analysis: use all mouse genes mapped through the same STRING v12
+# alias resource. The enrichment code, annotations, filters and overlap test
+# remain unchanged, isolating the effect of the background definition.
+cat("\n=== ALL-MOUSE BACKGROUND ===\n")
+all_mouse_background <- mapped_genes
+cat("Background:", length(all_mouse_background), "genes\n")
+
+all_mouse_rhythmic_gene_sets <- lapply(
+  normalised_rhythmic_genes,
+  function(x) intersect(x, all_mouse_background)
+)
+for (ds_name in names(all_mouse_rhythmic_gene_sets)) {
+  cat(ds_name, "rhythmic genes in background:",
+      length(all_mouse_rhythmic_gene_sets[[ds_name]]), "\n")
+}
+
+all_mouse_pathway_models <- build_pathway_models(
+  pathway_annotation_map,
+  all_mouse_background,
+  categories,
+  category_names,
+  min_term_size = min_pathway_size
+)
+all_mouse_enrichment_list <- calculate_enrichment_lists(
+  all_mouse_rhythmic_gene_sets,
+  all_mouse_pathway_models,
+  categories,
+  fdr_cutoff = pathway_fdr_cutoff
+)
+all_mouse_enrichment_output <- format_enrichment_collection(
+  all_mouse_enrichment_list,
+  "all_mouse",
+  strategy_descriptions[["all_mouse"]],
+  "All_pairs",
+  length(all_mouse_background)
+)
+
+all_mouse_overlap_results <- bind_rows(lapply(
+  seq_along(ds_pairs),
+  function(pair_index) {
+    run_pathway_overlap_pair(
+      "all_mouse",
+      strategy_descriptions[["all_mouse"]],
+      ds_pairs[[pair_index]],
+      all_mouse_background,
+      all_mouse_rhythmic_gene_sets,
+      all_mouse_enrichment_list,
+      all_mouse_pathway_models,
+      categories,
+      category_names,
+      n_perm_enrichment,
+      strategy_seeds[["all_mouse"]] + 10L * pair_index
+    )
+  }
+))
+
+# The two sets of 18 P-values are adjusted separately within each background
+# strategy because they address different reference populations.
+pathway_overlap_background_comparison <- adjust_pathway_overlap_p_values(
+  bind_rows(
+    pair_specific_overlap_results,
+    all_mouse_overlap_results
+  )
+)
+pathway_enrichment_background_comparison <- bind_rows(
+  pair_specific_enrichment_output,
+  all_mouse_enrichment_output
+)
+
+# The all-mouse analysis supplies the functional-enrichment figures because the
+# pair-specific enriched-term lists are too sparse for informative figures.
+rhythmic_gene_sets <- all_mouse_rhythmic_gene_sets
+pathway_models <- all_mouse_pathway_models
+enrichment_list <- all_mouse_enrichment_list
+enrichment_overlap_results <- pathway_overlap_background_comparison %>%
+  filter(Background_Strategy == "all_mouse")
+
+local_pathway_enrichment <- all_mouse_enrichment_output %>%
+  dplyr::select(dataset, category, term, number_of_genes,
+                number_of_genes_in_background, p_value, fdr, description)
+
+write.csv(
+  local_pathway_enrichment,
+  "results/publication_figures/local_pathway_enrichment.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  pathway_enrichment_background_comparison,
+  paste0(
+    "results/publication_figures/",
+    "pathway_enrichment_background_comparison.csv"
+  ),
+  row.names = FALSE
+)
+write.csv(
+  pathway_overlap_background_comparison,
+  paste0(
+    "results/publication_figures/",
+    "pathway_overlap_background_comparison.csv"
+  ),
+  row.names = FALSE
+)
+
+# Remove the obsolete exploratory output from the discarded four-dataset
+# background so it cannot be mistaken for a current result after rerendering.
+obsolete_four_dataset_output <- file.path(
+  "results", "publication_figures",
+  "pathway_overlap_four_dataset_common.csv"
+)
+if (file.exists(obsolete_four_dataset_output)) {
+  unlink(obsolete_four_dataset_output)
+}
+
+for (strategy_code in names(strategy_descriptions)) {
+  write.csv(
+    pathway_overlap_background_comparison %>%
+      filter(Background_Strategy == strategy_code),
+    file.path(
+      "results", "publication_figures",
+      paste0("pathway_overlap_", strategy_code, ".csv")
+    ),
+    row.names = FALSE
+  )
+}
+
+supplementary_table_4 <- pathway_overlap_background_comparison %>%
+  transmute(
+    Background = recode(
+      Background_Strategy,
+      pair_specific_common = "Pair-specific tested-gene background",
+      all_mouse = "All-mouse background"
+    ),
+    Dataset_1 = Dataset1,
+    Dataset_2 = Dataset2,
+    Annotation_category = Category,
+    Background_genes = Background_Genes,
+    Rhythmic_genes_D1 = Rhythmic_Genes_D1,
+    Rhythmic_genes_D2 = Rhythmic_Genes_D2,
+    Eligible_terms = Eligible_Terms,
+    Enriched_terms_D1 = Enriched_Terms_D1,
+    Enriched_terms_D2 = Enriched_Terms_D2,
+    Overlapping_terms = Overlap,
+    Jaccard_index = signif(Jaccard_Index, 4),
+    Permutation_null_mean_Jaccard = signif(Perm_Null_Mean_Jaccard, 4),
+    Permutation_P = signif(Perm_P_value, 4),
+    Permutation_BH_adjusted_P = signif(Perm_P_BH, 4),
+    Conditional_hypergeometric_BH_adjusted_P = signif(
+      Conditional_Hypergeom_P_BH, 4
+    ),
+    Overlapping_term_IDs_and_names = Overlap_Terms
+  )
+
+write.csv(
+  supplementary_table_4,
+  "results/publication_figures/Supplementary_table_4.csv",
+  row.names = FALSE
+)
+cat("Pathway background-comparison tables saved.\n")
+cat(paste(
+  "Supplementary_table_4.csv contains the publication columns for",
+  "pair-specific and all-mouse results.\n"
+))
+print(pathway_overlap_background_comparison)
 ```
 
 ```{r enrichment_figures}
 # ── Combined enrichment data for figures ─────────────────────────────────────
-osmo_enrichment$dataset      <- "Osmo"
-dex_enrichment$dataset       <- "Dex"
-hs_enrichment$dataset        <- "HS"
-cartilage_enrichment$dataset <- "Cartilage"
-
-all_enrich <- bind_rows(
-  osmo_enrichment, dex_enrichment, hs_enrichment, cartilage_enrichment
-) %>%
-  filter(category != "Process") %>%
+all_enrich <- bind_rows(lapply(names(enrichment_list), function(ds_name) {
+  enrichment_list[[ds_name]] %>% mutate(dataset = ds_name)
+})) %>%
   mutate(
     category_label = case_when(
       category == "KEGG"         ~ "KEGG Pathways",
@@ -951,11 +1668,22 @@ all_enrich <- bind_rows(
 dataset_colors <- c(Osmo = "#4C9BE8", Dex = "#E87B4C",
                     HS   = "#4CE87B", Cartilage = "#C44CE8")
 
-# Terms present in >= 2 datasets
+# For readability, retain up to 20 of the strongest terms enriched in at least
+# two datasets per annotation category. Terms are ranked by their least
+# significant FDR among the datasets in which they are enriched.
+max_shared_terms_per_category <- 20L
 term_dataset_counts <- all_enrich %>%
   group_by(category_label, description) %>%
-  summarise(n_datasets = n_distinct(dataset), .groups = "drop") %>%
-  filter(n_datasets >= 2)
+  summarise(
+    n_datasets = n_distinct(dataset),
+    worst_fdr = max(fdr),
+    .groups = "drop"
+  ) %>%
+  filter(n_datasets >= 2) %>%
+  group_by(category_label) %>%
+  slice_min(worst_fdr, n = max_shared_terms_per_category,
+            with_ties = FALSE) %>%
+  ungroup()
 
 plot_data <- all_enrich %>%
   semi_join(term_dataset_counts, by = c("category_label", "description"))
@@ -969,20 +1697,39 @@ for (cat_code in fig_cats) {
 
   jac_mat <- matrix(1, nrow = n_datasets, ncol = n_datasets,
                     dimnames = list(dataset_names, dataset_names))
+  jac_labels <- matrix(sprintf("%.3f", jac_mat),
+                       nrow = n_datasets, ncol = n_datasets,
+                       dimnames = list(dataset_names, dataset_names))
 
   for (k in seq_len(nrow(cat_results))) {
     n1 <- as.character(cat_results$Dataset1[k])
     n2 <- as.character(cat_results$Dataset2[k])
     j  <- as.numeric(cat_results$Jaccard_Index[k])
+    p_bh <- as.numeric(cat_results$Perm_P_BH[k])
+    significance_symbol <- dplyr::case_when(
+      p_bh < 0.001 ~ "***",
+      p_bh < 0.01  ~ "**",
+      p_bh < 0.05  ~ "*",
+      TRUE         ~ ""
+    )
+    label <- paste0(sprintf("%.3f", j), significance_symbol)
     jac_mat[n1, n2] <- j
     jac_mat[n2, n1] <- j
+    jac_labels[n1, n2] <- label
+    jac_labels[n2, n1] <- label
   }
 
   p_jac <- pheatmap(jac_mat,
-    display_numbers = TRUE, number_format = "%.3f",
+    display_numbers = jac_labels,
     cluster_rows    = FALSE, cluster_cols = FALSE,
     color           = colorRampPalette(c("white", "orange", "red"))(100),
-    main            = sprintf("%s\nJaccard Index of enriched terms", cat_name),
+    main            = sprintf(
+      paste0(
+        "%s\nJaccard Index of enriched terms\nAll-mouse background\n",
+        "BH-adjusted permutation P: * < 0.05; ** < 0.01; *** < 0.001"
+      ),
+      cat_name
+    ),
     fontsize_number = 20, fontsize = 20)
 
   ggsave(sprintf("results/publication_figures/Fig3B_enrichment_jaccard_%s.pdf",  cat_code),
@@ -999,7 +1746,10 @@ p_tile_wiki <- make_tile_heatmap(plot_data, "WikiPathways")
 p_tile_combined <- p_tile_kegg / p_tile_rctm / p_tile_wiki +
   plot_annotation(
     title    = "Shared enriched terms across datasets",
-    subtitle = "Terms present in \u2265 2 datasets | fill = -log10(FDR) | grey = absent/not significant")
+    subtitle = paste(
+      "All-mouse background | up to 20 strongest terms present in",
+      "\u2265 2 datasets | fill = -log10(FDR) | grey = absent/not significant"
+    ))
 
 p_tile_combined
 
@@ -1021,7 +1771,7 @@ p_bar_wiki <- make_bar_chart(top5_data, "WikiPathways",   dataset_colors)
 
 p_bar_combined <- p_bar_kegg / p_bar_rctm / p_bar_wiki +
   plot_annotation(title    = "Top 5 enriched terms per dataset",
-                  subtitle = "Grouped by category")
+                  subtitle = "All-mouse background | grouped by category")
 
 p_bar_combined
 

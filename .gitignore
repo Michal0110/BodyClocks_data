@@ -27,6 +27,12 @@ Thumbs.db
 *.tmp
 *.bak
 
+# Downloaded pathway annotation databases (cached by the paper analysis)
+data/raw/10090.protein.enrichment.terms.v12.0.txt
+data/raw/10090.protein.enrichment.terms.v12.0.txt.gz
+data/raw/mmu_kegg_pathway_genes_raw.tsv
+data/raw/mmu_kegg_pathway_names_raw.tsv
+
 # Generated environment diagnostics
 docs/renv_diagnostics.txt
 docs/sessionInfo.txt
