@@ -3,6 +3,13 @@
 This inventory summarises the active analysis scripts, their source scripts,
 inputs, generated outputs, and external annotation services.
 
+For every app-selectable dataset, the network outputs include an enrichment
+bundle containing both dataset-tested and all-STRING backgrounds. The former is
+defined by the unique genes actually supplied to rhythmicity testing after the
+dataset-specific expression and probe filters. Both variants include GO
+Biological Process, KEGG, Reactome and WikiPathways terms at FDR <= 0.05; legacy
+unsuffixed enrichment RDS files contain the all-STRING variant.
+
 | Analysis script | Source script(s) | Inputs | Outputs | External services |
 |---|---|---|---|---|
 | `analysis/01_cartilage.Rmd` | `cartilage.Rmd`, `circ_cartilage_timecourse_bodyclocks.rmd` | `data/raw/wt_cartilage.csv`, `data/raw/ko_cartilage.csv` | Circadian-result and enrichment CSVs in `results/tables/`; app-ready RDS files in `results/shiny_data/mouse/cartilage_circ/` | Ensembl, STRINGdb |

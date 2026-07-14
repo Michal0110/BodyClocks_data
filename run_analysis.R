@@ -141,5 +141,10 @@ if (length(failures)) {
   quit(status = 1)
 }
 
+if (is.null(subset_arg)) {
+  message("Validating the complete app artifact manifest...")
+  validate_rds_exists()
+}
+
 cat("Run completed:", format(Sys.time()), "\n", file = log_path, append = TRUE)
 message("Analysis complete.")

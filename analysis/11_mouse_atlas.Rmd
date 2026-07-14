@@ -132,12 +132,40 @@ process_tissue <- function(raw_data, tissue_name, ensembl_mart, phase_colors) {
     dplyr::rename(symbol = mgi_symbol)
 
   gene_list <- nodes_data$ENSEMBL
+  enrichment_background_genes <- unique(rownames(data))
 
   out_dir <- file.path("results", "shiny_data", "mouse", tissue_name)
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
+  gene_mapping <- create_gene_mapping(
+    gene_ids = merged$ENSEMBL,
+    symbols = nodes_data$symbol
+  )
+  cat("Created mapping for", length(gene_mapping), "genes\n")
+
+  enrichment_backgrounds <- get_string_enrichment_backgrounds(
+    foreground_genes = gene_list,
+    tested_genes = enrichment_background_genes,
+    species_id = 10090
+  )
+  enrichment_background_bundle <- build_string_enrichment_background_bundle(
+    enrichment_backgrounds = enrichment_backgrounds,
+    nodes_data = nodes_data,
+    gene_info = gene_info,
+    gene_mapping = gene_mapping,
+    phase_colors = phase_colors,
+    gene_info_symbol_col = "external_gene_name",
+    phase_shift = -6
+  )
+  save_string_enrichment_background_bundle(
+    enrichment_background_bundle,
+    output_dir = out_dir,
+    prefix = tissue_name
+  )
+
   if (length(gene_list) == 0) {
-    cat("WARNING: No significant genes (BH.Q <= 0.05) for", tissue_name, "- skipping STRING\n")
+    cat("WARNING: No significant genes (BH.Q <= 0.05) for", tissue_name,
+        "- saving empty network RDS files\n")
     save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, "_nodes.rds")))
     save_string_edges_by_threshold(
       empty_string_edges_by_threshold(),
@@ -145,116 +173,31 @@ process_tissue <- function(raw_data, tissue_name, ensembl_mart, phase_colors) {
       prefix = tissue_name
     )
     save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, "_nodes_with_tooltips.rds")))
-    save_rds_checked(list(), file = file.path(out_dir, paste0(tissue_name, "_cluster_for_plot.rds")))
+    save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, "_cluster_for_plot.rds")))
     save_rds_checked(data.frame(), file = file.path(out_dir, paste0(tissue_name, "_cluster_descriptions.rds")))
   } else {
-    gene_mapping <- create_gene_mapping(gene_ids = merged$ENSEMBL, symbols = nodes_data$symbol)
-    cat("Created mapping for", length(gene_mapping), "genes\n")
-
     network_bundle <- get_string_network_bundle(
       gene_list = gene_list,
       gene_mapping = gene_mapping,
       species_id = 10090,
-      nodes_data = nodes_data
+      nodes_data = nodes_data,
+      include_enrichment = FALSE
     )
-    edges <- network_bundle$edges_by_threshold
-    cluster_data <- network_bundle$cluster_data
-
-    cluster_descriptions <- cluster_data %>%
-      dplyr::select(cluster = term, cluster_description = description, category)
-
-    for (i in 1:nrow(cluster_data)) {
-      cluster_data$preferredNames[[i]] <- sapply(cluster_data$preferredNames[[i]],
-                                                 function(x) map_to_mgi(x, gene_mapping))
-    }
-
-    cluster_data <- map_enrichment_genes(cluster_data, gene_mapping)
-
-    cluster_data$preferredNames <- lapply(cluster_data$preferredNames, function(gene_str) {
-      if (is.character(gene_str) && length(gene_str) == 1) {
-        gene_vector <- trimws(strsplit(gene_str, ",")[[1]])
-        return(gene_vector)
-      } else {
-        return(gene_str)
-      }
-    })
-
-    reformatted_clusters <- cluster_data %>%
-      dplyr::select(cluster = term, cluster_description = description, id = preferredNames, category) %>%
-      unnest(id)
-
-    nodes_data2 <- data.frame(id = nodes_data$symbol, label = nodes_data$symbol, phase = nodes_data$phase)
-    nodes_data2$phase <- (nodes_data2$phase - 6) %% 24
-
-    nodes <- nodes_data2 %>%
-      mutate(color = phase_colors[as.character(phase)]) %>%
-      dplyr::select(-phase) %>%
-      left_join(reformatted_clusters, by = "id") %>%
-      group_by(id, label, color) %>%
-      summarize(
-        clusters = list(unique(cluster)),
-        cluster_description = list(unique(cluster_description)),
-        .groups = 'drop')
-
-    merged_nodes <- merge(nodes, gene_info, by.x = "label", by.y = "external_gene_name", all.x = TRUE)
-    merged_nodes <- merged_nodes %>%
-      filter(!duplicated(label))
-
-    node_tooltips <- nodes %>%
-      rowwise() %>%
-      mutate(
-        cluster_info = list(
-          cluster_descriptions %>%
-            filter(cluster %in% unlist(clusters)) %>%
-            dplyr::select(cluster, cluster_description, category)
-        )
-      ) %>%
-      mutate(
-        enrichment_sections = list(character(0)),
-        enrichment_sections = list(
-          if (length(cluster_info) > 0) {
-            categories <- unique(cluster_info$category)
-            sapply(categories, function(cat) {
-              cat_name <- case_when(
-                cat == "Process" ~ "GO Biological Process",
-                cat == "KEGG" ~ "KEGG Pathway",
-                cat == "RCTM" ~ "Reactome",
-                cat == "WikiPathways" ~ "WikiPathways",
-                TRUE ~ cat
-              )
-              cat_terms <- cluster_info %>% filter(category == cat) %>% pull(cluster_description)
-              if(length(cat_terms) > 0) {
-                paste0("<b>", cat_name, ":</b> ", paste(cat_terms, collapse = ", "))
-              } else {
-                character(0)
-              }
-            })
-          } else {
-            character(0)
-          }
-        ),
-        formatted_tooltip = paste(na.omit(unlist(enrichment_sections)), collapse = "<br>")
-      ) %>%
-      dplyr::select(id, formatted_tooltip)
-
-    nodes_with_tooltips <- merged_nodes %>%
-      left_join(node_tooltips, by = "id") %>%
-      mutate(title = paste0("<b>", label, "</b> - ", description,
-                           ifelse(nchar(formatted_tooltip) > 0,
-                                  paste0("<br><br>", formatted_tooltip), ""))) %>%
-      dplyr::select(-c(cluster_description, formatted_tooltip, clusters))
-
-    cluster_for_plot <- cluster_data %>%
-      dplyr::select(cluster = term, genes = preferredNames)
-
-    nodes <- nodes %>% filter(!is.na(id))
-    nodes_with_tooltips <- nodes_with_tooltips %>% filter(!is.na(id))
-
-    save_rds_checked(nodes, file = file.path(out_dir, paste0(tissue_name, "_nodes.rds")))
-    save_string_edges_by_threshold(edges, output_dir = out_dir, prefix = tissue_name)
-    save_rds_checked(nodes_with_tooltips, file = file.path(out_dir, paste0(tissue_name, "_nodes_with_tooltips.rds")))
-    save_rds_checked(cluster_for_plot, file = file.path(out_dir, paste0(tissue_name, "_cluster_for_plot.rds")))
-    save_rds_checked(cluster_descriptions, file = file.path(out_dir, paste0(tissue_name, "_cluster_descriptions.rds")))
+    network_outputs <- build_string_network_outputs(
+      cluster_data = enrichment_backgrounds$backgrounds$all_string$cluster_data,
+      nodes_data = nodes_data,
+      gene_info = gene_info,
+      gene_mapping = gene_mapping,
+      phase_colors = phase_colors,
+      gene_info_symbol_col = "external_gene_name",
+      phase_shift = -6
+    )
+    save_string_network_outputs(
+      outputs = network_outputs,
+      edges = network_bundle$edges_by_threshold,
+      output_dir = out_dir,
+      prefix = tissue_name
+    )
   }
 
   # --- 5. Plotting data ---
@@ -303,6 +246,7 @@ process_tissue <- function(raw_data, tissue_name, ensembl_mart, phase_colors) {
 ```
 
 ```{r batch_process}
+tissue_failures <- character()
 for (tissue_name in names(tissues)) {
   tryCatch({
     process_tissue(
@@ -313,6 +257,16 @@ for (tissue_name in names(tissues)) {
     )
   }, error = function(e) {
     cat("\nERROR processing", tissue_name, ":", e$message, "\n")
+    tissue_failures[[tissue_name]] <<- conditionMessage(e)
   })
+}
+if (length(tissue_failures)) {
+  stop(
+    "Mouse atlas processing failed for: ",
+    paste(names(tissue_failures), collapse = ", "),
+    ". See the errors above; incomplete enrichment backgrounds must not be ",
+    "deployed.",
+    call. = FALSE
+  )
 }
 ```

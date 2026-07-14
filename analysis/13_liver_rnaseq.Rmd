@@ -223,103 +223,88 @@ process_condition_for_shiny <- function(
     dplyr::filter(BH.Q <= 0.05, !is.na(mgi_symbol), nzchar(mgi_symbol)) %>%
     dplyr::rename(symbol = mgi_symbol)
 
-  if (nrow(nodes_data) == 0) {
-    warning("No significantly rhythmic genes for condition: ", condition_name)
-    return(invisible(NULL))
-  }
-
   gene_list    <- nodes_data$Row.names
+  enrichment_background_genes <- unique(circ$Row.names)
   gene_mapping <- create_gene_mapping(gene_ids = gene_list, symbols = nodes_data$symbol)
+  out_dir <- file.path(
+    "results", "shiny_data", "mouse", "liver_RNAseq", condition_name
+  )
+  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+
+  network_gene_info <- merged %>%
+    dplyr::transmute(
+      preferred_symbol = mgi_symbol,
+      description = dplyr::coalesce(description, "")
+    ) %>%
+    dplyr::filter(!is.na(preferred_symbol), nzchar(preferred_symbol)) %>%
+    dplyr::distinct(preferred_symbol, .keep_all = TRUE)
 
   # 4. STRING network and enrichment -------------------------------------------
-  network_bundle <- get_string_network_bundle(
-    gene_list = gene_list,
-    gene_mapping = gene_mapping,
-    species_id = 10090,
-    nodes_data = nodes_data
+  enrichment_backgrounds <- get_string_enrichment_backgrounds(
+    foreground_genes = gene_list,
+    tested_genes = enrichment_background_genes,
+    species_id = 10090
   )
-  edges <- network_bundle$edges_by_threshold
-  cluster_data <- network_bundle$cluster_data
+  enrichment_background_bundle <- build_string_enrichment_background_bundle(
+    enrichment_backgrounds = enrichment_backgrounds,
+    nodes_data = nodes_data,
+    gene_info = network_gene_info,
+    gene_mapping = gene_mapping,
+    phase_colors = phase_colors
+  )
+  save_string_enrichment_background_bundle(
+    enrichment_background_bundle,
+    output_dir = out_dir,
+    prefix = condition_name
+  )
 
-  cluster_data <- map_enrichment_genes(cluster_data, gene_mapping)
-  cluster_data$preferredNames <- lapply(cluster_data$preferredNames, function(s) {
-    trimws(strsplit(s, ",")[[1]])
-  })
+  if (length(gene_list) == 0) {
+    warning("No significantly rhythmic genes for condition: ", condition_name)
+    nodes <- data.frame()
+    edges <- empty_string_edges_by_threshold()
+    save_rds_checked(data.frame(), file.path(
+      out_dir, paste0(condition_name, "_nodes.rds")
+    ))
+    save_string_edges_by_threshold(
+      edges,
+      output_dir = out_dir,
+      prefix = condition_name
+    )
+    save_rds_checked(data.frame(), file.path(
+      out_dir, paste0(condition_name, "_nodes_with_tooltips.rds")
+    ))
+    save_rds_checked(data.frame(), file.path(
+      out_dir, paste0(condition_name, "_cluster_for_plot.rds")
+    ))
+    save_rds_checked(data.frame(), file.path(
+      out_dir, paste0(condition_name, "_cluster_descriptions.rds")
+    ))
+  } else {
+    network_bundle <- get_string_network_bundle(
+      gene_list = gene_list,
+      gene_mapping = gene_mapping,
+      species_id = 10090,
+      nodes_data = nodes_data,
+      include_enrichment = FALSE
+    )
+    network_outputs <- build_string_network_outputs(
+      cluster_data = enrichment_backgrounds$backgrounds$all_string$cluster_data,
+      nodes_data = nodes_data,
+      gene_info = network_gene_info,
+      gene_mapping = gene_mapping,
+      phase_colors = phase_colors
+    )
+    nodes <- network_outputs$nodes
+    edges <- network_bundle$edges_by_threshold
+    save_string_network_outputs(
+      outputs = network_outputs,
+      edges = edges,
+      output_dir = out_dir,
+      prefix = condition_name
+    )
+  }
 
-  # 5. Cluster lookups ---------------------------------------------------------
-  cluster_descriptions <- cluster_data %>%
-    dplyr::select(cluster = term, cluster_description = description, category)
-
-  reformatted_clusters <- cluster_data %>%
-    dplyr::select(cluster = term, cluster_description = description,
-                  id = preferredNames, category) %>%
-    unnest(id)
-
-  # 6. Build nodes -------------------------------------------------------------
-  nodes <- data.frame(id    = nodes_data$symbol,
-                      label = nodes_data$symbol,
-                      phase = nodes_data$phase,
-                      stringsAsFactors = FALSE) %>%
-    dplyr::mutate(color = phase_colors[as.character(phase)]) %>%
-    dplyr::select(-phase) %>%
-    dplyr::left_join(reformatted_clusters, by = "id") %>%
-    dplyr::group_by(id, label, color) %>%
-    dplyr::summarize(clusters            = list(unique(cluster)),
-                     cluster_description = list(unique(cluster_description)),
-                     .groups = "drop")
-
-  merged_nodes <- merge(nodes,
-                        gene_info[, c("mgi_symbol", "ensembl_gene_id", "description")],
-                        by.x = "label", by.y = "mgi_symbol", all.x = TRUE) %>%
-    dplyr::filter(!duplicated(label))
-
-  # 7. Node tooltips -----------------------------------------------------------
-  node_tooltips <- nodes %>%
-    dplyr::rowwise() %>%
-    dplyr::mutate(
-      cluster_info = list(
-        cluster_descriptions %>%
-          dplyr::filter(cluster %in% unlist(clusters)) %>%
-          dplyr::select(cluster, cluster_description, category)
-      ),
-      enrichment_sections = list(
-        if (nrow(cluster_info) > 0) {
-          sapply(unique(cluster_info$category), function(cat) {
-            cat_name <- switch(cat,
-              "Process"      = "GO Biological Process",
-              "KEGG"         = "KEGG Pathway",
-              "RCTM"         = "Reactome",
-              "WikiPathways" = "WikiPathways",
-              cat
-            )
-            terms <- cluster_info %>%
-              dplyr::filter(category == cat) %>%
-              dplyr::pull(cluster_description)
-            if (length(terms) > 0)
-              paste0("<b>", cat_name, ":</b> ", paste(terms, collapse = ", "))
-            else
-              character(0)
-          })
-        } else character(0)
-      ),
-      formatted_tooltip = paste(na.omit(unlist(enrichment_sections)), collapse = "<br>")
-    ) %>%
-    dplyr::select(id, formatted_tooltip)
-
-  nodes_with_tooltips <- merged_nodes %>%
-    dplyr::left_join(node_tooltips, by = "id") %>%
-    dplyr::mutate(title = paste0(
-      "<b>", label, "</b> - ", description,
-      ifelse(nchar(formatted_tooltip) > 0, paste0("<br><br>", formatted_tooltip), "")
-    )) %>%
-    dplyr::select(-c(cluster_description, formatted_tooltip, clusters)) %>%
-    dplyr::filter(!is.na(id))
-
-  nodes <- nodes %>% dplyr::filter(!is.na(id))
-  cluster_for_plot <- cluster_data %>%
-    dplyr::select(cluster = term, genes = preferredNames)
-
-  # 8. mean_sd for Shiny time-series plot --------------------------------------
+  # 5. mean_sd for Shiny time-series plot --------------------------------------
   time_labels <- rep(sprintf("%02d", seq_len(n_timepoints)), each = n_reps)
 
   df_long <- do.call(rbind, lapply(seq_along(expr_cols), function(i) {
@@ -341,7 +326,7 @@ process_condition_for_shiny <- function(
   colnames(qval_df) <- c("Gene", "BH.Q")
   mean_sd <- dplyr::inner_join(mean_sd, qval_df, by = "Gene")
 
-  # 9. display_dt with amplitude -----------------------------------------------
+  # 6. display_dt with amplitude -----------------------------------------------
   time_nums <- sort(unique(as.numeric(sub(".*[A-Za-z](\\d+)_\\d+$", "\\1", expr_cols))))
   for (t in time_nums) {
     t_cols <- grep(paste0("[A-Za-z]", t, "_\\d+$"), names(merged), value = TRUE)
@@ -357,15 +342,7 @@ process_condition_for_shiny <- function(
     dplyr::rename(symbol = mgi_symbol) %>%
     dplyr::arrange(BH.Q)
 
-  # 10. Save outputs -----------------------------------------------------------
-  out_dir <- file.path("results", "shiny_data", "mouse", "liver_RNAseq", condition_name)
-  dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-
-  save_rds_checked(nodes,                file.path(out_dir, paste0(condition_name, "_nodes.rds")))
-  save_string_edges_by_threshold(edges, output_dir = out_dir, prefix = condition_name)
-  save_rds_checked(nodes_with_tooltips,  file.path(out_dir, paste0(condition_name, "_nodes_with_tooltips.rds")))
-  save_rds_checked(cluster_for_plot,     file.path(out_dir, paste0(condition_name, "_cluster_for_plot.rds")))
-  save_rds_checked(cluster_descriptions, file.path(out_dir, paste0(condition_name, "_cluster_descriptions.rds")))
+  # 7. Save non-network outputs ------------------------------------------------
   save_rds_checked(mean_sd,              file.path(out_dir, paste0(condition_name, "_data.rds")))
   save_rds_checked(display_dt,           file.path(out_dir, paste0(condition_name, "_display_dt.rds")))
 

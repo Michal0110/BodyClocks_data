@@ -133,6 +133,7 @@ nodes_data <- merged %>%
 
 # ENSEMBL gene IDs return more results than MGI symbols
 gene_list <- nodes_data$ENSEMBL
+enrichment_background_genes <- unique(stats::na.omit(merged$ENSEMBL))
 
 gene_mapping <- create_gene_mapping(
   gene_ids = merged$ENSEMBL,
@@ -145,15 +146,22 @@ cat("Created mapping for", length(gene_mapping), "genes\n")
 ```{r build_string_network}
 # Get protein-protein interactions and enrichment data using STRINGdb
 
+enrichment_backgrounds <- get_string_enrichment_backgrounds(
+  foreground_genes = gene_list,
+  tested_genes = enrichment_background_genes,
+  species_id = 10090
+)
+
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,
   gene_mapping = gene_mapping,
   species_id = 10090,
   nodes_data = nodes_data,
-  id_col = "ENSEMBL"
+  id_col = "ENSEMBL",
+  include_enrichment = FALSE
 )
 edges <- network_bundle$edges_by_threshold
-cluster_data <- network_bundle$cluster_data
+cluster_data <- enrichment_backgrounds$backgrounds$all_string$cluster_data
 
 
 phase_colors <- c("3" = "orange", "7" = "yellow", "11" = "red", "15" = "purple", "19" = "navy", "23" = "lightblue")
@@ -164,6 +172,9 @@ network_outputs <- build_string_network_outputs(
   gene_info = gene_info,
   gene_mapping = gene_mapping,
   phase_colors = phase_colors)
+enrichment_background_bundle <- build_string_enrichment_background_bundle(
+  enrichment_backgrounds, nodes_data, gene_info, gene_mapping, phase_colors
+)
 
 cluster_data <- network_outputs$cluster_data
 nodes <- network_outputs$nodes
@@ -174,6 +185,11 @@ cluster_descriptions <- network_outputs$cluster_descriptions
 save_string_network_outputs(
   outputs = network_outputs,
   edges = edges,
+  output_dir = "results/shiny_data/mouse/xiphoid_cartilage",
+  prefix = "xiphoid"
+)
+save_string_enrichment_background_bundle(
+  enrichment_background_bundle,
   output_dir = "results/shiny_data/mouse/xiphoid_cartilage",
   prefix = "xiphoid"
 )

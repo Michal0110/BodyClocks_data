@@ -54,6 +54,13 @@ Run a structural validation before starting the analyses:
 Rscript run_analysis.R --dry-run
 ```
 
+Run the focused offline test for the background-aware enrichment schema and
+STRING request contract with:
+
+```sh
+Rscript tests/test_enrichment_backgrounds.R
+```
+
 To reproduce the manuscript comparison figures and supplementary tables:
 
 ```sh
@@ -91,14 +98,34 @@ Generated reports, intermediate tables, caches and app-ready RDS files are
 written below `results/`. Only publication-ready outputs are retained in version
 control.
 
+Each app network dataset includes enrichment results for two alternative
+backgrounds: genes retained for rhythmicity testing in that dataset and all
+proteins available for the species in STRING. Both variants use STRING v12.0,
+FDR <= 0.05 and the GO Biological Process, KEGG, Reactome and WikiPathways
+categories. The background-aware enrichment bundle is stored alongside the
+network RDS files; the unsuffixed enrichment files retain the all-STRING result
+for compatibility with earlier versions of the app.
+
+After regenerating every dataset, validate the complete app artifact set and,
+when the application repository is checked out alongside this repository,
+synchronize it with:
+
+```sh
+Rscript -e 'source("R/validation_utils.R"); validate_rds_exists()'
+rsync -a results/shiny_data/ ../BodyClocks/data/
+```
+
 ## External resources and reproducibility
 
 Some analyses query Ensembl BioMart and STRING v12.0, so an internet connection
-is required when the corresponding cached annotations are unavailable. Shared
-wrappers retry transient failures and stop rather than silently returning
-partial annotations. For long-term reproducibility, release archives should
-include the input matrices, metadata, manifests, environment files and final
-publication outputs.
+is required when the corresponding cached annotations are unavailable. The
+dataset-specific STRING enrichment requests use the unique genes that passed
+the dataset's preprocessing filters and were supplied to RAIN as their
+background; the rhythmic foreground retains the thresholds documented in each
+analysis script. Shared wrappers retry transient failures and stop rather than
+silently returning partial annotations. For long-term reproducibility, release
+archives should include the input matrices, metadata, manifests, environment
+files and final publication outputs.
 
 The machine-readable data inventory is `data_manifest.csv`; source information
 is described further in the [data-source documentation](docs/data_sources.md).

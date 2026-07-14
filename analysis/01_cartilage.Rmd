@@ -191,6 +191,7 @@ nodes_data <- merged %>%
 
 # ENSEMBL gene IDs return more results than MGI symbols
 gene_list <- nodes_data$CycID
+enrichment_background_genes <- unique(wt_RAIN$CycID)
 ```
 
 ```{r build_wt_string_network}
@@ -201,19 +202,33 @@ gene_mapping <- create_gene_mapping(
 
 cat("Created mapping for", length(gene_mapping), "genes\n")
 
+enrichment_backgrounds <- get_string_enrichment_backgrounds(
+  foreground_genes = gene_list,
+  tested_genes = enrichment_background_genes,
+  species_id = 10090
+)
+
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,
   gene_mapping = gene_mapping,
   species_id = 10090,
-  nodes_data = nodes_data
+  nodes_data = nodes_data,
+  include_enrichment = FALSE
 )
 edges <- network_bundle$edges_by_threshold
-cluster_data <- network_bundle$cluster_data
+cluster_data <- enrichment_backgrounds$backgrounds$all_string$cluster_data
 
 phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
 
 network_outputs <- build_string_network_outputs(
   cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors
+)
+enrichment_background_bundle <- build_string_enrichment_background_bundle(
+  enrichment_backgrounds = enrichment_backgrounds,
   nodes_data = nodes_data,
   gene_info = gene_info,
   gene_mapping = gene_mapping,
@@ -232,6 +247,11 @@ cluster_descriptions <- network_outputs$cluster_descriptions
 save_string_network_outputs(
   outputs = network_outputs,
   edges = edges,
+  output_dir = "results/shiny_data/mouse/cartilage_circ",
+  prefix = "cartilage"
+)
+save_string_enrichment_background_bundle(
+  enrichment_background_bundle,
   output_dir = "results/shiny_data/mouse/cartilage_circ",
   prefix = "cartilage"
 )
@@ -358,6 +378,7 @@ nodes_data <- merged %>%
 
 # ENSEMBL gene IDs return more results than MGI symbols
 gene_list <- nodes_data$CycID
+enrichment_background_genes <- unique(ko_RAIN$CycID)
 
 # Create the mapping using your existing data
 gene_mapping <- create_gene_mapping(
@@ -368,19 +389,33 @@ gene_mapping <- create_gene_mapping(
 cat("Created mapping for", length(gene_mapping), "genes\n")
 ```
 ```{r build_ko_string_network}
+enrichment_backgrounds <- get_string_enrichment_backgrounds(
+  foreground_genes = gene_list,
+  tested_genes = enrichment_background_genes,
+  species_id = 10090
+)
+
 network_bundle <- get_string_network_bundle(
   gene_list = gene_list,
   gene_mapping = gene_mapping,
   species_id = 10090,
-  nodes_data = nodes_data
+  nodes_data = nodes_data,
+  include_enrichment = FALSE
 )
 edges <- network_bundle$edges_by_threshold
-cluster_data <- network_bundle$cluster_data
+cluster_data <- enrichment_backgrounds$backgrounds$all_string$cluster_data
 
 phase_colors <- c("4" = "orange", "8" = "yellow", "12" = "red", "16" = "purple", "20" = "navy", "24" = "lightblue")
 
 network_outputs <- build_string_network_outputs(
   cluster_data = cluster_data,
+  nodes_data = nodes_data,
+  gene_info = gene_info,
+  gene_mapping = gene_mapping,
+  phase_colors = phase_colors
+)
+enrichment_background_bundle <- build_string_enrichment_background_bundle(
+  enrichment_backgrounds = enrichment_backgrounds,
   nodes_data = nodes_data,
   gene_info = gene_info,
   gene_mapping = gene_mapping,
@@ -396,6 +431,11 @@ cluster_descriptions <- network_outputs$cluster_descriptions
 save_string_network_outputs(
   outputs = network_outputs,
   edges = edges,
+  output_dir = "results/shiny_data/mouse/cartilage_circ",
+  prefix = "ko_cart"
+)
+save_string_enrichment_background_bundle(
+  enrichment_background_bundle,
   output_dir = "results/shiny_data/mouse/cartilage_circ",
   prefix = "ko_cart"
 )

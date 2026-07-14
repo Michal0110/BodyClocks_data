@@ -1587,28 +1587,6 @@ write.csv(
   row.names = FALSE
 )
 
-# Remove the obsolete exploratory output from the discarded four-dataset
-# background so it cannot be mistaken for a current result after rerendering.
-obsolete_four_dataset_output <- file.path(
-  "results", "publication_figures",
-  "pathway_overlap_four_dataset_common.csv"
-)
-if (file.exists(obsolete_four_dataset_output)) {
-  unlink(obsolete_four_dataset_output)
-}
-
-for (strategy_code in names(strategy_descriptions)) {
-  write.csv(
-    pathway_overlap_background_comparison %>%
-      filter(Background_Strategy == strategy_code),
-    file.path(
-      "results", "publication_figures",
-      paste0("pathway_overlap_", strategy_code, ".csv")
-    ),
-    row.names = FALSE
-  )
-}
-
 supplementary_table_4 <- pathway_overlap_background_comparison %>%
   transmute(
     Background = recode(
@@ -1723,13 +1701,6 @@ for (cat_code in fig_cats) {
     display_numbers = jac_labels,
     cluster_rows    = FALSE, cluster_cols = FALSE,
     color           = colorRampPalette(c("white", "orange", "red"))(100),
-    main            = sprintf(
-      paste0(
-        "%s\nJaccard Index of enriched terms\nAll-mouse background\n",
-        "BH-adjusted permutation P: * < 0.05; ** < 0.01; *** < 0.001"
-      ),
-      cat_name
-    ),
     fontsize_number = 20, fontsize = 20)
 
   ggsave(sprintf("results/publication_figures/Fig3B_enrichment_jaccard_%s.pdf",  cat_code),
