@@ -4,8 +4,12 @@ The canonical machine-readable inventory is `data_manifest.csv`.
 
 Each row records the local file, dataset label, source accession or URL when
 known, checksum, and whether the file should be included in the Zenodo archive.
-Before publication, fill in any missing source accession, description, and
-licensing notes.
+Before publication, verify these fields and record any source-specific licensing
+or redistribution restrictions in the notes.
+
+The primary-chondrocyte dexamethasone and heat-shock datasets share the assigned
+ArrayExpress accession `E-MTAB-17163`. The accession is recorded in the manifest,
+but the ArrayExpress study is not yet publicly accessible.
 
 ## Downloaded pathway annotations
 

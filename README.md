@@ -112,8 +112,25 @@ synchronize it with:
 
 ```sh
 Rscript -e 'source("R/validation_utils.R"); validate_rds_exists()'
-rsync -a results/shiny_data/ ../BodyClocks/data/
+rsync -a results/shiny_data/ ../BodyClocks_app/data/
+cd ../BodyClocks_app
+Rscript -e 'FORCE_RECOMPUTE <- TRUE; source("precompute_positions.R")'
 ```
+
+The position-precomputation step is required after synchronisation. It opens a
+temporary Shiny app in a browser and saves stable layouts for both STRING
+confidence thresholds; keep the browser window open until it finishes. The
+forced run refreshes existing position files that `rsync` leaves in place.
+
+Fitted expression curves may optionally be cached in advance, although this is
+computationally intensive:
+
+```sh
+Rscript -e 'source("precompute_curves.R")'
+```
+
+The application remains fully functional without curve caches and fits selected
+genes on demand.
 
 ## External resources and reproducibility
 
@@ -124,8 +141,9 @@ the dataset's preprocessing filters and were supplied to RAIN as their
 background; the rhythmic foreground retains the thresholds documented in each
 analysis script. Shared wrappers retry transient failures and stop rather than
 silently returning partial annotations. For long-term reproducibility, release
-archives should include the input matrices, metadata, manifests, environment
-files and final publication outputs.
+archives should include redistributable input matrices, metadata, manifests,
+environment files and final publication outputs; inputs that cannot be
+redistributed should instead be identified by accession and retrieval details.
 
 The machine-readable data inventory is `data_manifest.csv`; source information
 is described further in the [data-source documentation](docs/data_sources.md).
@@ -135,7 +153,7 @@ available and supplies MGI or external gene symbols for display.
 ## Related resources
 
 - Web application: [BodyClocks.org](https://www.bodyclocks.org)
-- Application source code: [Michal0110/BodyClocks](https://github.com/Michal0110/BodyClocks)
+- Application source code: [Michal0110/BodyClocks_app](https://github.com/Michal0110/BodyClocks_app)
 - Analysis source code: [Michal0110/BodyClocks_data](https://github.com/Michal0110/BodyClocks_data)
 
 ## Citation
@@ -143,3 +161,11 @@ available and supplies MGI or external gene symbols for display.
 If you use this workflow or its processed data, please cite the associated
 publication and the archived software release. Machine-readable citation
 metadata are provided in [`CITATION.cff`](CITATION.cff).
+
+## License
+
+The repository's analysis code is released under the [MIT License](LICENSE).
+Third-party input datasets and reference resources are not relicensed and remain
+subject to their original providers' terms. Their provenance and accession
+information are recorded in the [data-source documentation](docs/data_sources.md)
+and `data_manifest.csv`.
