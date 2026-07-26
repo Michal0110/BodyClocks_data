@@ -1,16 +1,19 @@
 # BodyClocks data and analysis pipeline
 
-This repository contains the reproducible R workflow supporting the BodyClocks
-study of circadian transcriptomes. It processes curated mouse and baboon
-transcriptomic datasets into a common set of circadian statistics, functional
-annotations and STRING association networks; prepares data files consumed by
-the [BodyClocks](https://www.bodyclocks.org) web application; and generates the
-figures and supplementary tables accompanying the manuscript.
+This repository contains the R code and input data used to process the publicly available
+circadian transcriptomic datasets included in the [BodyClocks](https://www.bodyclocks.org) 
+web application and to reproduce the analyses presented in the accompanying manuscript.
 
-The workflow starts from the gene-level count or expression matrices supplied
-in `data/raw/`. FASTQ quality control, trimming and genome alignment for newly
-generated sequencing data are described in the manuscript but are not executed
-by this repository.
+[BodyClocks](https://www.bodyclocks.org) brings together datasets generated in different 
+tissues, laboratories and experimental systems so that their rhythmic transcriptomes can
+be explored and compared in a consistent format. This workflow performs the dataset-specific
+pre-processing and rhythmicity analyses, adds functional annotations and STRING association 
+networks, and generates both the app-ready data and the manuscript figures and supplementary 
+tables.
+
+The workflow begins with gene-level count or expression matrices supplied in data/raw/.
+FASTQ quality control, trimming and genome alignment for newly generated sequencing 
+data are described in the manuscript but are not performed within this repository.
 
 ## Repository contents
 
@@ -141,9 +144,9 @@ the dataset's preprocessing filters and were supplied to RAIN as their
 background; the rhythmic foreground retains the thresholds documented in each
 analysis script. Shared wrappers retry transient failures and stop rather than
 silently returning partial annotations. For long-term reproducibility, release
-archives should include redistributable input matrices, metadata, manifests,
+archives include redistributable input matrices, metadata, manifests,
 environment files and final publication outputs; inputs that cannot be
-redistributed should instead be identified by accession and retrieval details.
+redistributed are instead identified by accession and retrieval details.
 
 The machine-readable data inventory is `data_manifest.csv`; source information
 is described further in the [data-source documentation](docs/data_sources.md).
