@@ -4,13 +4,21 @@ p <- "alternative_processing/ejtk"
 phase <- read.csv(file.path(p, "results/phase_genes.csv"))
 phase <- subset(phase, rule == "paper_anchor")
 stopifnot(identical(unique(phase$comparison), "Dex_vs_HS"))
+
+# Retain the manuscript's clock-panel labels on individual points.
 core <- subset(read.csv(file.path(p, "results/rhythmic_membership.csv")), clock_panel)$ensembl_gene_id
+
+
+# Use the paper’s shortest-arc distance on a 24 h clock. A difference of 4 h is concordant.
 source("revision/notebook_chunks.R")
 eval(read_notebook_chunks("analysis/comparison_analysis_paper.rmd")$helper_functions)
 phase$distance <- circ_dist_24(phase$Dex, phase$HS)
 stopifnot(identical(phase$distance <= 4, phase$concordant))
 phase$panel <- ifelse(phase$ensembl_gene_id %in% core, "Clock panel", "Other genes")
 phase$symbol <- reorder(phase$symbol, -phase$distance)
+
+
+# Plot every shared rhythmic gene, including Bmal1 itself at zero distance.
 fig <- ggplot(phase, aes(distance, symbol)) +
   geom_segment(aes(x=0, xend=distance, yend=symbol), colour="grey80") +
   geom_vline(xintercept=4, linetype="dashed", colour="grey35") +
@@ -22,4 +30,3 @@ fig <- ggplot(phase, aes(distance, symbol)) +
        shape=NULL, colour=NULL) + theme_classic() + theme(legend.position="bottom")
 for (ext in c("pdf","png"))
   ggsave(file.path(p, "figures", paste0("clock_relative_phase.",ext)), fig, width=6.8, height=5.3, dpi=300)
-
