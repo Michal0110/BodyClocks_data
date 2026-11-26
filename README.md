@@ -172,3 +172,7 @@ Third-party input datasets and reference resources are not relicensed and remain
 subject to their original providers' terms. Their provenance and accession
 information are recorded in the [data-source documentation](docs/data_sources.md)
 and `data_manifest.csv`.
+
+## Manuscript revision
+
+[Corrected Dex RAIN, figure replacement checklist and reproducible inputs](revision/README.md)

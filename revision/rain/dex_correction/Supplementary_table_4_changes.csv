@@ -1,0 +1,118 @@
+Background,Dataset_1,Dataset_2,Annotation_category,field,original,corrected
+All-mouse background,Dex,Cartilage,KEGG Pathways,Rhythmic_genes_D1,1922,1966
+All-mouse background,Dex,Cartilage,KEGG Pathways,Enriched_terms_D1,45,57
+All-mouse background,Dex,Cartilage,KEGG Pathways,Overlapping_terms,18,28
+All-mouse background,Dex,Cartilage,KEGG Pathways,Jaccard_index,0.1636,0.25
+All-mouse background,Dex,Cartilage,KEGG Pathways,Permutation_null_mean_Jaccard,0.09004,0.1052
+All-mouse background,Dex,Cartilage,KEGG Pathways,Permutation_P,0.02098,0.000999
+All-mouse background,Dex,Cartilage,KEGG Pathways,Permutation_BH_adjusted_P,0.03147,0.001998
+All-mouse background,Dex,Cartilage,KEGG Pathways,Conditional_hypergeometric_BH_adjusted_P,0.006696,3.995e-06
+All-mouse background,Dex,Cartilage,KEGG Pathways,Overlapping_term_IDs_and_names,mmu04710 (Circadian rhythm); mmu05418 (Fluid shear stress and atherosclerosis); mmu04066 (HIF-1 signaling pathway); mmu01232 (Nucleotide metabolism); mmu00010 (Glycolysis / Gluconeogenesis); mmu04517 (IgSF CAM signaling); mmu04144 (Endocytosis); mmu05230 (Central carbon metabolism in cancer); mmu04015 (Rap1 signaling pathway); mmu04510 (Focal adhesion); mmu04010 (MAPK signaling pathway); mmu05200 (Pathways in cancer); mmu04141 (Protein processing in endoplasmic reticulum); mmu05132 (Salmonella infection); mmu04518 (Integrin signaling); mmu05221 (Acute myeloid leukemia); mmu05135 (Yersinia infection); mmu04151 (PI3K-Akt signaling pathway),mmu04710 (Circadian rhythm); mmu05200 (Pathways in cancer); mmu05418 (Fluid shear stress and atherosclerosis); mmu05221 (Acute myeloid leukemia); mmu04066 (HIF-1 signaling pathway); mmu04517 (IgSF CAM signaling); mmu05170 (Human immunodeficiency virus 1 infection); mmu05135 (Yersinia infection); mmu05132 (Salmonella infection); mmu05230 (Central carbon metabolism in cancer); mmu04518 (Integrin signaling); mmu04218 (Cellular senescence); mmu04510 (Focal adhesion); mmu04666 (Fc gamma R-mediated phagosome formation); mmu04380 (Osteoclast differentiation); mmu04142 (Lysosome biogenesis); mmu05212 (Pancreatic cancer); mmu00010 (Glycolysis / Gluconeogenesis); mmu04145 (Phagocytosis); mmu04015 (Rap1 signaling pathway); mmu04144 (Endocytosis); mmu05163 (Human cytomegalovirus infection); mmu04810 (Regulation of actin cytoskeleton); mmu05152 (Tuberculosis); mmu04210 (Apoptosis); mmu01232 (Nucleotide metabolism); mmu04010 (MAPK signaling pathway); mmu04151 (PI3K-Akt signaling pathway)
+All-mouse background,Dex,Cartilage,Reactome,Rhythmic_genes_D1,1922,1966
+All-mouse background,Dex,Cartilage,Reactome,Enriched_terms_D1,64,72
+All-mouse background,Dex,Cartilage,Reactome,Overlapping_terms,23,24
+All-mouse background,Dex,Cartilage,Reactome,Jaccard_index,0.1691,0.1678
+All-mouse background,Dex,Cartilage,Reactome,Permutation_null_mean_Jaccard,0.02859,0.03041
+All-mouse background,Dex,Cartilage,Reactome,Permutation_P,0.001998,0.002997
+All-mouse background,Dex,Cartilage,Reactome,Permutation_BH_adjusted_P,0.003996,0.005395
+All-mouse background,Dex,Cartilage,Reactome,Conditional_hypergeometric_BH_adjusted_P,5.315e-12,7.895e-12
+All-mouse background,Dex,Cartilage,Reactome,Overlapping_term_IDs_and_names,"MMU-162582 (Signal Transduction); MMU-9012999 (RHO GTPase cycle); MMU-9716542 (Signaling by Rho GTPases, Miro GTPases and RHOBTB3); MMU-194315 (Signaling by Rho GTPases); MMU-9013149 (RAC1 GTPase cycle); MMU-9675108 (Nervous system development); MMU-422475 (Axon guidance); MMU-194138 (Signaling by VEGF); MMU-9013148 (CDC42 GTPase cycle); MMU-4420097 (VEGFA-VEGFR2 Pathway); MMU-8980692 (RHOA GTPase cycle); MMU-9013423 (RAC3 GTPase cycle); MMU-597592 (Post-translational protein modification); MMU-168256 (Immune System); MMU-9006934 (Signaling by Receptor Tyrosine Kinases); MMU-109582 (Hemostasis); MMU-9013404 (RAC2 GTPase cycle); MMU-168249 (Innate Immune System); MMU-76002 (Platelet activation, signaling and aggregation); MMU-9013408 (RHOG GTPase cycle); MMU-1474244 (Extracellular matrix organization); MMU-6798695 (Neutrophil degranulation); MMU-8953897 (Cellular responses to stimuli)","MMU-162582 (Signal Transduction); MMU-9012999 (RHO GTPase cycle); MMU-9716542 (Signaling by Rho GTPases, Miro GTPases and RHOBTB3); MMU-194315 (Signaling by Rho GTPases); MMU-9675108 (Nervous system development); MMU-422475 (Axon guidance); MMU-9013149 (RAC1 GTPase cycle); MMU-194138 (Signaling by VEGF); MMU-8980692 (RHOA GTPase cycle); MMU-168256 (Immune System); MMU-4420097 (VEGFA-VEGFR2 Pathway); MMU-9013423 (RAC3 GTPase cycle); MMU-9013148 (CDC42 GTPase cycle); MMU-9013404 (RAC2 GTPase cycle); MMU-9006934 (Signaling by Receptor Tyrosine Kinases); MMU-168249 (Innate Immune System); MMU-109582 (Hemostasis); MMU-6798695 (Neutrophil degranulation); MMU-8953897 (Cellular responses to stimuli); MMU-9013408 (RHOG GTPase cycle); MMU-2262752 (Cellular responses to stress); MMU-195258 (RHO GTPase Effectors); MMU-597592 (Post-translational protein modification); MMU-1280218 (Adaptive Immune System)"
+All-mouse background,Dex,Cartilage,WikiPathways,Rhythmic_genes_D1,1922,1966
+All-mouse background,Dex,Cartilage,WikiPathways,Enriched_terms_D1,12,17
+All-mouse background,Dex,Cartilage,WikiPathways,Overlapping_terms,7,9
+All-mouse background,Dex,Cartilage,WikiPathways,Jaccard_index,0.2593,0.3
+All-mouse background,Dex,Cartilage,WikiPathways,Permutation_null_mean_Jaccard,0.04385,0.05615
+All-mouse background,Dex,Cartilage,WikiPathways,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,Dex,Cartilage,WikiPathways,Conditional_hypergeometric_BH_adjusted_P,0.000135,2.299e-05
+All-mouse background,Dex,Cartilage,WikiPathways,Overlapping_term_IDs_and_names,WP65 (Insulin signaling); WP544 (Exercise-induced circadian regulation); WP85 (Focal adhesion); WP572 (EGFR1 signaling pathway); WP3625 (Tyrobp causal network in microglia); WP2841 (Focal adhesion: PI3K-Akt-mTOR signaling pathway); WP450 (IL-2 signaling pathway),WP3625 (Tyrobp causal network in microglia); WP572 (EGFR1 signaling pathway); WP65 (Insulin signaling); WP85 (Focal adhesion); WP544 (Exercise-induced circadian regulation); WP450 (IL-2 signaling pathway); WP413 (G1 to S cell cycle control); WP373 (IL-3 signaling pathway); WP3626 (Microglia pathogen phagocytosis pathway)
+All-mouse background,Dex,HS,KEGG Pathways,Rhythmic_genes_D1,1922,1966
+All-mouse background,Dex,HS,KEGG Pathways,Enriched_terms_D1,45,57
+All-mouse background,Dex,HS,KEGG Pathways,Overlapping_terms,37,51
+All-mouse background,Dex,HS,KEGG Pathways,Jaccard_index,0.2126,0.2965
+All-mouse background,Dex,HS,KEGG Pathways,Permutation_null_mean_Jaccard,0.1093,0.1339
+All-mouse background,Dex,HS,KEGG Pathways,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,Dex,HS,KEGG Pathways,Conditional_hypergeometric_BH_adjusted_P,2.931e-07,4.928e-13
+All-mouse background,Dex,HS,KEGG Pathways,Overlapping_term_IDs_and_names,"mmu04710 (Circadian rhythm); mmu05100 (Bacterial invasion of epithelial cells); mmu05205 (Proteoglycans in cancer); mmu01100 (Metabolic pathways); mmu05418 (Fluid shear stress and atherosclerosis); mmu04066 (HIF-1 signaling pathway); mmu01232 (Nucleotide metabolism); mmu04148 (Efferocytosis); mmu05225 (Hepatocellular carcinoma); mmu00010 (Glycolysis / Gluconeogenesis); mmu04517 (IgSF CAM signaling); mmu04115 (p53 signaling pathway); mmu04936 (Alcoholic liver disease); mmu04144 (Endocytosis); mmu01200 (Carbon metabolism); mmu05230 (Central carbon metabolism in cancer); mmu05223 (Non-small cell lung cancer); mmu04015 (Rap1 signaling pathway); mmu04510 (Focal adhesion); mmu04010 (MAPK signaling pathway); mmu04340 (Hedgehog signaling pathway); mmu00310 (Lysine degradation); mmu05200 (Pathways in cancer); mmu05214 (Glioma); mmu01524 (Platinum drug resistance); mmu00532 (Glycosaminoglycan biosynthesis - chondroitin sulfate / dermatan sulfate); mmu04211 (Longevity regulating pathway); mmu04141 (Protein processing in endoplasmic reticulum); mmu04722 (Neurotrophin signaling pathway); mmu05132 (Salmonella infection); mmu00280 (Valine, leucine and isoleucine degradation); mmu01230 (Biosynthesis of amino acids); mmu04518 (Integrin signaling); mmu05211 (Renal cell carcinoma); mmu04820 (Cytoskeleton in muscle cells); mmu05135 (Yersinia infection); mmu04151 (PI3K-Akt signaling pathway)",mmu04710 (Circadian rhythm); mmu05205 (Proteoglycans in cancer); mmu05100 (Bacterial invasion of epithelial cells); mmu05200 (Pathways in cancer); mmu04148 (Efferocytosis); mmu05418 (Fluid shear stress and atherosclerosis); mmu04066 (HIF-1 signaling pathway); mmu05225 (Hepatocellular carcinoma); mmu04517 (IgSF CAM signaling); mmu05214 (Glioma); mmu05223 (Non-small cell lung cancer); mmu05170 (Human immunodeficiency virus 1 infection); mmu05135 (Yersinia infection); mmu05132 (Salmonella infection); mmu01100 (Metabolic pathways); mmu05230 (Central carbon metabolism in cancer); mmu04518 (Integrin signaling); mmu04392 (Hippo signaling pathway - multiple species); mmu04820 (Cytoskeleton in muscle cells); mmu04218 (Cellular senescence); mmu04510 (Focal adhesion); mmu04340 (Hedgehog signaling pathway); mmu04666 (Fc gamma R-mediated phagosome formation); mmu04380 (Osteoclast differentiation); mmu04142 (Lysosome biogenesis); mmu01524 (Platinum drug resistance); mmu05212 (Pancreatic cancer); mmu00010 (Glycolysis / Gluconeogenesis); mmu05211 (Renal cell carcinoma); mmu04145 (Phagocytosis); mmu04115 (p53 signaling pathway); mmu04015 (Rap1 signaling pathway); mmu04144 (Endocytosis); mmu05163 (Human cytomegalovirus infection); mmu04211 (Longevity regulating pathway); mmu03250 (Viral life cycle - HIV-1); mmu04068 (FoxO signaling pathway); mmu01522 (Endocrine resistance); mmu05222 (Small cell lung cancer); mmu04810 (Regulation of actin cytoskeleton); mmu05152 (Tuberculosis); mmu04210 (Apoptosis); mmu05161 (Hepatitis B); mmu01232 (Nucleotide metabolism); mmu05220 (Chronic myeloid leukemia); mmu04010 (MAPK signaling pathway); mmu04012 (ErbB signaling pathway); mmu04151 (PI3K-Akt signaling pathway); mmu04936 (Alcoholic liver disease); mmu05226 (Gastric cancer); mmu04310 (Wnt signaling pathway)
+All-mouse background,Dex,HS,Reactome,Rhythmic_genes_D1,1922,1966
+All-mouse background,Dex,HS,Reactome,Enriched_terms_D1,64,72
+All-mouse background,Dex,HS,Reactome,Overlapping_terms,56,60
+All-mouse background,Dex,HS,Reactome,Jaccard_index,0.1938,0.2048
+All-mouse background,Dex,HS,Reactome,Permutation_null_mean_Jaccard,0.03799,0.04278
+All-mouse background,Dex,HS,Reactome,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,Dex,HS,Reactome,Conditional_hypergeometric_BH_adjusted_P,3.318e-32,4.056e-32
+All-mouse background,Dex,HS,Reactome,Overlapping_term_IDs_and_names,"MMU-162582 (Signal Transduction); MMU-9012999 (RHO GTPase cycle); MMU-9716542 (Signaling by Rho GTPases, Miro GTPases and RHOBTB3); MMU-194315 (Signaling by Rho GTPases); MMU-9013149 (RAC1 GTPase cycle); MMU-9675108 (Nervous system development); MMU-71387 (Metabolism of carbohydrates); MMU-422475 (Axon guidance); MMU-1430728 (Metabolism); MMU-194138 (Signaling by VEGF); MMU-9013148 (CDC42 GTPase cycle); MMU-4420097 (VEGFA-VEGFR2 Pathway); MMU-8980692 (RHOA GTPase cycle); MMU-9013423 (RAC3 GTPase cycle); MMU-1630316 (Glycosaminoglycan metabolism); MMU-9013406 (RHOQ GTPase cycle); MMU-597592 (Post-translational protein modification); MMU-168256 (Immune System); MMU-1266738 (Developmental Biology); MMU-9006934 (Signaling by Receptor Tyrosine Kinases); MMU-392499 (Metabolism of proteins); MMU-109582 (Hemostasis); MMU-9013404 (RAC2 GTPase cycle); MMU-168249 (Innate Immune System); MMU-416482 (G alpha (12/13) signalling events); MMU-8856828 (Clathrin-mediated endocytosis); MMU-1793185 (Chondroitin sulfate/dermatan sulfate metabolism); MMU-5218920 (VEGFR2 mediated vascular permeability); MMU-2682334 (EPH-Ephrin signaling); MMU-74160 (Gene expression (Transcription)); MMU-9013026 (RHOB GTPase cycle); MMU-73857 (RNA Polymerase II Transcription); MMU-5683057 (MAPK family signaling cascades); MMU-193648 (NRAGE signals death through JNK); MMU-204998 (Cell death signalling via NRAGE, NRIF and NADE); MMU-199991 (Membrane Trafficking); MMU-212436 (Generic Transcription Pathway); MMU-9013106 (RHOC GTPase cycle); MMU-5653656 (Vesicle-mediated transport); MMU-2029482 (Regulation of actin dynamics for phagocytic cup formation); MMU-2024096 (HS-GAG degradation); MMU-1474290 (Collagen formation); MMU-76002 (Platelet activation, signaling and aggregation); MMU-9006931 (Signaling by Nuclear Receptors); MMU-193704 (p75 NTR receptor-mediated signalling); MMU-73887 (Death Receptor Signaling); MMU-2029480 (Fcgamma receptor (FCGR) dependent phagocytosis); MMU-9013408 (RHOG GTPase cycle); MMU-5673001 (RAF/MAP kinase cascade); MMU-1650814 (Collagen biosynthesis and modifying enzymes); MMU-1474244 (Extracellular matrix organization); MMU-70895 (Branched-chain amino acid catabolism); MMU-5684996 (MAPK1/MAPK3 signaling); MMU-6798695 (Neutrophil degranulation); MMU-8953897 (Cellular responses to stimuli); MMU-1638091 (Heparan sulfate/heparin (HS-GAG) metabolism)","MMU-162582 (Signal Transduction); MMU-9012999 (RHO GTPase cycle); MMU-9716542 (Signaling by Rho GTPases, Miro GTPases and RHOBTB3); MMU-194315 (Signaling by Rho GTPases); MMU-9675108 (Nervous system development); MMU-422475 (Axon guidance); MMU-9013149 (RAC1 GTPase cycle); MMU-1430728 (Metabolism); MMU-194138 (Signaling by VEGF); MMU-71387 (Metabolism of carbohydrates); MMU-8980692 (RHOA GTPase cycle); MMU-168256 (Immune System); MMU-4420097 (VEGFA-VEGFR2 Pathway); MMU-1630316 (Glycosaminoglycan metabolism); MMU-9013423 (RAC3 GTPase cycle); MMU-9013148 (CDC42 GTPase cycle); MMU-1266738 (Developmental Biology); MMU-9013404 (RAC2 GTPase cycle); MMU-9006934 (Signaling by Receptor Tyrosine Kinases); MMU-168249 (Innate Immune System); MMU-9013406 (RHOQ GTPase cycle); MMU-109582 (Hemostasis); MMU-2682334 (EPH-Ephrin signaling); MMU-74160 (Gene expression (Transcription)); MMU-5683057 (MAPK family signaling cascades); MMU-2024096 (HS-GAG degradation); MMU-6798695 (Neutrophil degranulation); MMU-2029482 (Regulation of actin dynamics for phagocytic cup formation); MMU-73857 (RNA Polymerase II Transcription); MMU-2029480 (Fcgamma receptor (FCGR) dependent phagocytosis); MMU-1793185 (Chondroitin sulfate/dermatan sulfate metabolism); MMU-212436 (Generic Transcription Pathway); MMU-8953897 (Cellular responses to stimuli); MMU-9006931 (Signaling by Nuclear Receptors); MMU-9013408 (RHOG GTPase cycle); MMU-196854 (Metabolism of vitamins and cofactors); MMU-2022090 (Assembly of collagen fibrils and other multimeric structures); MMU-5653656 (Vesicle-mediated transport); MMU-2262752 (Cellular responses to stress); MMU-195258 (RHO GTPase Effectors); MMU-8856828 (Clathrin-mediated endocytosis); MMU-199991 (Membrane Trafficking); MMU-5673001 (RAF/MAP kinase cascade); MMU-9006925 (Intracellular signaling by second messengers); MMU-3928662 (EPHB-mediated forward signaling); MMU-5218920 (VEGFR2 mediated vascular permeability); MMU-9013106 (RHOC GTPase cycle); MMU-5684996 (MAPK1/MAPK3 signaling); MMU-196849 (Metabolism of water-soluble vitamins and cofactors); MMU-1638091 (Heparan sulfate/heparin (HS-GAG) metabolism); MMU-597592 (Post-translational protein modification); MMU-9013026 (RHOB GTPase cycle); MMU-392499 (Metabolism of proteins); MMU-1280218 (Adaptive Immune System); MMU-1474290 (Collagen formation); MMU-416482 (G alpha (12/13) signalling events); MMU-1257604 (PIP3 activates AKT signaling); MMU-5627123 (RHO GTPases activate PAKs); MMU-193648 (NRAGE signals death through JNK); MMU-983231 (Factors involved in megakaryocyte development and platelet production)"
+All-mouse background,Dex,HS,WikiPathways,Rhythmic_genes_D1,1922,1966
+All-mouse background,Dex,HS,WikiPathways,Enriched_terms_D1,12,17
+All-mouse background,Dex,HS,WikiPathways,Overlapping_terms,11,13
+All-mouse background,Dex,HS,WikiPathways,Jaccard_index,0.2075,0.2321
+All-mouse background,Dex,HS,WikiPathways,Permutation_null_mean_Jaccard,0.05611,0.0764
+All-mouse background,Dex,HS,WikiPathways,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,Dex,HS,WikiPathways,Conditional_hypergeometric_BH_adjusted_P,8.567e-06,3.168e-05
+All-mouse background,Dex,HS,WikiPathways,Overlapping_term_IDs_and_names,WP385 (Myometrial relaxation and contraction pathways); WP65 (Insulin signaling); WP544 (Exercise-induced circadian regulation); WP85 (Focal adhesion); WP4466 (Oxidative stress and redox pathway); WP572 (EGFR1 signaling pathway); WP3625 (Tyrobp causal network in microglia); WP1763 (Mechanisms associated with pluripotency); WP2841 (Focal adhesion: PI3K-Akt-mTOR signaling pathway); WP450 (IL-2 signaling pathway); WP539 (Wnt signaling pathway),WP3625 (Tyrobp causal network in microglia); WP385 (Myometrial relaxation and contraction pathways); WP572 (EGFR1 signaling pathway); WP65 (Insulin signaling); WP85 (Focal adhesion); WP544 (Exercise-induced circadian regulation); WP450 (IL-2 signaling pathway); WP1763 (Mechanisms associated with pluripotency); WP539 (Wnt signaling pathway); WP553 (Calcium regulation in cardiac cells); WP373 (IL-3 signaling pathway); WP3626 (Microglia pathogen phagocytosis pathway); WP4466 (Oxidative stress and redox pathway)
+All-mouse background,HS,Cartilage,KEGG Pathways,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,HS,Cartilage,KEGG Pathways,Conditional_hypergeometric_BH_adjusted_P,2.584e-08,2.067e-08
+All-mouse background,HS,Cartilage,Reactome,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,HS,Cartilage,WikiPathways,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,Osmo,Cartilage,WikiPathways,Permutation_BH_adjusted_P,0.1427,0.1528
+All-mouse background,Osmo,Dex,KEGG Pathways,Rhythmic_genes_D2,1922,1966
+All-mouse background,Osmo,Dex,KEGG Pathways,Enriched_terms_D2,45,57
+All-mouse background,Osmo,Dex,KEGG Pathways,Jaccard_index,0.06,0.04839
+All-mouse background,Osmo,Dex,KEGG Pathways,Permutation_null_mean_Jaccard,0.0198,0.0207
+All-mouse background,Osmo,Dex,KEGG Pathways,Permutation_P,0.08392,0.1329
+All-mouse background,Osmo,Dex,KEGG Pathways,Permutation_BH_adjusted_P,0.1079,0.1594
+All-mouse background,Osmo,Dex,KEGG Pathways,Conditional_hypergeometric_BH_adjusted_P,0.08295,0.1419
+All-mouse background,Osmo,Dex,KEGG Pathways,Overlapping_term_IDs_and_names,mmu04710 (Circadian rhythm); mmu01100 (Metabolic pathways); mmu04141 (Protein processing in endoplasmic reticulum),mmu04710 (Circadian rhythm); mmu01100 (Metabolic pathways); mmu04142 (Lysosome biogenesis)
+All-mouse background,Osmo,Dex,Reactome,Rhythmic_genes_D2,1922,1966
+All-mouse background,Osmo,Dex,Reactome,Enriched_terms_D2,64,72
+All-mouse background,Osmo,Dex,Reactome,Jaccard_index,0.06944,0.0625
+All-mouse background,Osmo,Dex,Reactome,Permutation_null_mean_Jaccard,0.007921,0.007996
+All-mouse background,Osmo,Dex,Reactome,Permutation_BH_adjusted_P,0.01144,0.01049
+All-mouse background,Osmo,Dex,Reactome,Conditional_hypergeometric_BH_adjusted_P,0.0002635,0.000423
+All-mouse background,Osmo,Dex,WikiPathways,Rhythmic_genes_D2,1922,1966
+All-mouse background,Osmo,Dex,WikiPathways,Enriched_terms_D2,12,17
+All-mouse background,Osmo,Dex,WikiPathways,Jaccard_index,0.08333,0.05882
+All-mouse background,Osmo,Dex,WikiPathways,Permutation_null_mean_Jaccard,0.006417,0.005882
+All-mouse background,Osmo,Dex,WikiPathways,Permutation_P,0.07792,0.1009
+All-mouse background,Osmo,Dex,WikiPathways,Permutation_BH_adjusted_P,0.1079,0.1397
+All-mouse background,Osmo,Dex,WikiPathways,Conditional_hypergeometric_BH_adjusted_P,0.08295,0.1266
+All-mouse background,Osmo,HS,KEGG Pathways,Permutation_BH_adjusted_P,0.007193,0.006539
+All-mouse background,Osmo,HS,KEGG Pathways,Conditional_hypergeometric_BH_adjusted_P,0.00285,0.002612
+All-mouse background,Osmo,HS,Reactome,Permutation_BH_adjusted_P,0.002248,0.001998
+All-mouse background,Osmo,HS,Reactome,Conditional_hypergeometric_BH_adjusted_P,9.969e-08,8.308e-08
+Pair-specific tested-gene background,Dex,Cartilage,KEGG Pathways,Rhythmic_genes_D1,1763,1800
+Pair-specific tested-gene background,Dex,Cartilage,KEGG Pathways,Permutation_null_mean_Jaccard,0.002625,0.00375
+Pair-specific tested-gene background,Dex,Cartilage,KEGG Pathways,Permutation_P,0.02198,0.03097
+Pair-specific tested-gene background,Dex,Cartilage,KEGG Pathways,Permutation_BH_adjusted_P,0.1079,0.1115
+Pair-specific tested-gene background,Dex,Cartilage,KEGG Pathways,Conditional_hypergeometric_BH_adjusted_P,0.1023,0.08396
+Pair-specific tested-gene background,Dex,Cartilage,Reactome,Rhythmic_genes_D1,1763,1800
+Pair-specific tested-gene background,Dex,Cartilage,Reactome,Enriched_terms_D1,1,3
+Pair-specific tested-gene background,Dex,Cartilage,Reactome,Permutation_null_mean_Jaccard,0.0008333,0.001929
+Pair-specific tested-gene background,Dex,Cartilage,WikiPathways,Rhythmic_genes_D1,1763,1800
+Pair-specific tested-gene background,Dex,Cartilage,WikiPathways,Enriched_terms_D1,0,2
+Pair-specific tested-gene background,Dex,Cartilage,WikiPathways,Permutation_null_mean_Jaccard,0,0.006
+Pair-specific tested-gene background,Dex,HS,KEGG Pathways,Rhythmic_genes_D1,1899,1939
+Pair-specific tested-gene background,Dex,HS,KEGG Pathways,Permutation_null_mean_Jaccard,0.0028,0.0034
+Pair-specific tested-gene background,Dex,HS,Reactome,Rhythmic_genes_D1,1899,1939
+Pair-specific tested-gene background,Dex,HS,Reactome,Enriched_terms_D1,9,6
+Pair-specific tested-gene background,Dex,HS,Reactome,Permutation_null_mean_Jaccard,0.004559,0.004473
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Rhythmic_genes_D1,1899,1939
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Enriched_terms_D1,0,2
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Overlapping_terms,0,1
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Jaccard_index,0,0.3333
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Permutation_null_mean_Jaccard,0,0.007
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Permutation_P,1,0.02198
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Permutation_BH_adjusted_P,1,0.1079
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Conditional_hypergeometric_BH_adjusted_P,1,0.08396
+Pair-specific tested-gene background,Dex,HS,WikiPathways,Overlapping_term_IDs_and_names,,WP3625 (Tyrobp causal network in microglia)
+Pair-specific tested-gene background,HS,Cartilage,Reactome,Permutation_BH_adjusted_P,0.4352,0.3626
+Pair-specific tested-gene background,HS,Cartilage,Reactome,Conditional_hypergeometric_BH_adjusted_P,0.4041,0.3367
+Pair-specific tested-gene background,HS,Cartilage,WikiPathways,Conditional_hypergeometric_BH_adjusted_P,0.1023,0.08396
+Pair-specific tested-gene background,Osmo,Cartilage,KEGG Pathways,Conditional_hypergeometric_BH_adjusted_P,0.1023,0.08396
+Pair-specific tested-gene background,Osmo,Dex,KEGG Pathways,Rhythmic_genes_D2,1822,1844
+Pair-specific tested-gene background,Osmo,Dex,KEGG Pathways,Permutation_null_mean_Jaccard,0.002,0.003
+Pair-specific tested-gene background,Osmo,Dex,KEGG Pathways,Permutation_P,0.002997,0.003996
+Pair-specific tested-gene background,Osmo,Dex,KEGG Pathways,Permutation_BH_adjusted_P,0.05395,0.07193
+Pair-specific tested-gene background,Osmo,Dex,Reactome,Rhythmic_genes_D2,1822,1844
+Pair-specific tested-gene background,Osmo,Dex,Reactome,Enriched_terms_D2,10,5
+Pair-specific tested-gene background,Osmo,Dex,Reactome,Permutation_null_mean_Jaccard,8e-04,0.0018
+Pair-specific tested-gene background,Osmo,Dex,WikiPathways,Rhythmic_genes_D2,1822,1844

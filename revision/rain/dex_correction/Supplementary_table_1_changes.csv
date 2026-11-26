@@ -1,0 +1,131 @@
+gene,field,original,corrected
+Arhgap44,mean_crp,0,-1.33333333333333
+Arhgap44,sd_crp,0,2.3094010767585
+Arhgap44,range_crp,0,4
+Arhgap44,circ_sd_crp,0,0.501312705086263
+Arhgap44,phases,"Osmo:8, Dex:12, HS:24","Osmo:8, Dex:8, HS:24"
+Arhgap44,crp_values,"Osmo:0.0, Dex:0.0, HS:0.0","Osmo:0.0, Dex:-4.0, HS:0.0"
+Arhgap44,dist_osmo_dex_h,0,4
+Arhgap44,dist_dex_hs_h,0,4
+Arhgap44,max_pairwise_dist_h,0,4
+B3galnt1,mean_crp,-1.33333333333333,2.66666666666667
+B3galnt1,sd_crp,8.32666399786453,6.11010092660779
+B3galnt1,range_crp,16,12
+B3galnt1,phases,"Osmo:4, Dex:4, HS:8","Osmo:4, Dex:16, HS:8"
+B3galnt1,crp_values,"Osmo:-4.0, Dex:-8.0, HS:8.0","Osmo:-4.0, Dex:4.0, HS:8.0"
+B3galnt1,dist_osmo_dex_h,4,8
+B3galnt1,dist_dex_hs_h,8,4
+Bcl9,row_status,absent,present
+Cry1,mean_crp,-4,-5.33333333333333
+Cry1,sd_crp,0,2.3094010767585
+Cry1,range_crp,0,4
+Cry1,circ_sd_crp,0,0.501312705086263
+Cry1,phases,"Osmo:4, Dex:8, HS:20","Osmo:4, Dex:4, HS:20"
+Cry1,crp_values,"Osmo:-4.0, Dex:-4.0, HS:-4.0","Osmo:-4.0, Dex:-8.0, HS:-4.0"
+Cry1,dist_osmo_dex_h,0,4
+Cry1,dist_dex_hs_h,0,4
+Cry1,max_pairwise_dist_h,0,4
+Dbp,mean_crp,0,6.66666666666667
+Dbp,sd_crp,10.5830052442584,9.23760430703401
+Dbp,range_crp,20,16
+Dbp,circ_sd_crp,0.900516638500549,1.04814707396821
+Dbp,phases,"Osmo:4, Dex:4, HS:12","Osmo:4, Dex:24, HS:12"
+Dbp,crp_values,"Osmo:-4.0, Dex:-8.0, HS:12.0","Osmo:-4.0, Dex:12.0, HS:12.0"
+Dbp,dist_osmo_dex_h,4,8
+Dbp,dist_dex_hs_h,4,0
+Herpud1,mean_crp,-5.33333333333333,1.33333333333333
+Herpud1,sd_crp,2.3094010767585,9.23760430703401
+Herpud1,range_crp,4,16
+Herpud1,circ_sd_crp,0.501312705086263,1.04814707396821
+Herpud1,phases,"Osmo:4, Dex:4, HS:20","Osmo:4, Dex:24, HS:20"
+Herpud1,crp_values,"Osmo:-4.0, Dex:-8.0, HS:-4.0","Osmo:-4.0, Dex:12.0, HS:-4.0"
+Herpud1,dist_osmo_dex_h,4,8
+Herpud1,dist_dex_hs_h,4,8
+Herpud1,max_pairwise_dist_h,4,8
+Herpud1,three_way_concordant,TRUE,FALSE
+Herpud1,classification,Clock-controlled,Variable
+Hsd17b4,row_status,absent,present
+Lgalsl,row_status,absent,present
+Limk2,row_status,present,absent
+Mrgpre,row_status,absent,present
+Mroh1,row_status,present,absent
+Ostf1,mean_crp,6.66666666666667,0
+Ostf1,sd_crp,9.23760430703401,10.5830052442584
+Ostf1,range_crp,16,20
+Ostf1,circ_sd_crp,1.04814707396821,0.900516638500549
+Ostf1,phases,"Osmo:4, Dex:24, HS:12","Osmo:4, Dex:4, HS:12"
+Ostf1,crp_values,"Osmo:-4.0, Dex:12.0, HS:12.0","Osmo:-4.0, Dex:-8.0, HS:12.0"
+Ostf1,dist_osmo_dex_h,8,4
+Ostf1,dist_dex_hs_h,0,4
+Per1,mean_crp,2.66666666666667,9.33333333333333
+Per1,sd_crp,10.0664459136943,4.61880215351701
+Per1,range_crp,20,8
+Per1,circ_sd_crp,1.48230380736751,1.0481470739682
+Per1,phases,"Osmo:20, Dex:4, HS:4","Osmo:20, Dex:24, HS:4"
+Per1,crp_values,"Osmo:12.0, Dex:-8.0, HS:4.0","Osmo:12.0, Dex:12.0, HS:4.0"
+Per1,dist_osmo_dex_h,4,0
+Per1,dist_dex_hs_h,12,8
+Per1,max_pairwise_dist_h,12,8
+Per3,mean_crp,-5.33333333333333,0
+Per3,sd_crp,2.3094010767585,10.5830052442584
+Per3,range_crp,4,20
+Per3,circ_sd_crp,0.501312705086263,0.900516638500549
+Per3,phases,"Osmo:4, Dex:8, HS:16","Osmo:4, Dex:24, HS:16"
+Per3,crp_values,"Osmo:-4.0, Dex:-4.0, HS:-8.0","Osmo:-4.0, Dex:12.0, HS:-8.0"
+Per3,dist_osmo_dex_h,0,8
+Per3,max_pairwise_dist_h,4,8
+Per3,three_way_concordant,TRUE,FALSE
+Per3,classification,Clock-controlled,Variable
+Ppox,row_status,present,absent
+Rabl6,mean_crp,0,-6.66666666666667
+Rabl6,sd_crp,10.5830052442584,2.3094010767585
+Rabl6,range_crp,20,4
+Rabl6,circ_sd_crp,0.900516638500549,0.501312705086263
+Rabl6,phases,"Osmo:4, Dex:24, HS:16","Osmo:4, Dex:4, HS:16"
+Rabl6,crp_values,"Osmo:-4.0, Dex:12.0, HS:-8.0","Osmo:-4.0, Dex:-8.0, HS:-8.0"
+Rabl6,dist_osmo_dex_h,8,4
+Rabl6,dist_dex_hs_h,4,0
+Rabl6,max_pairwise_dist_h,8,4
+Rabl6,three_way_concordant,FALSE,TRUE
+Rabl6,classification,Variable,Clock-controlled
+Rpl37rt,row_status,present,absent
+Safb2,row_status,absent,present
+Sdcbp,mean_crp,0,6.66666666666667
+Sdcbp,sd_crp,10.5830052442584,9.23760430703401
+Sdcbp,range_crp,20,16
+Sdcbp,circ_sd_crp,0.900516638500549,1.04814707396821
+Sdcbp,phases,"Osmo:4, Dex:4, HS:12","Osmo:4, Dex:24, HS:12"
+Sdcbp,crp_values,"Osmo:-4.0, Dex:-8.0, HS:12.0","Osmo:-4.0, Dex:12.0, HS:12.0"
+Sdcbp,dist_osmo_dex_h,4,8
+Sdcbp,dist_dex_hs_h,4,0
+Sft2d3,row_status,present,absent
+Sh3pxd2a,row_status,present,absent
+Slc36a1,row_status,absent,present
+Swap70,mean_crp,8,10.6666666666667
+Swap70,sd_crp,4,2.3094010767585
+Swap70,range_crp,8,4
+Swap70,circ_sd_crp,0.900516638500549,0.501312705086263
+Swap70,phases,"Osmo:16, Dex:16, HS:12","Osmo:16, Dex:24, HS:12"
+Swap70,crp_values,"Osmo:8.0, Dex:4.0, HS:12.0","Osmo:8.0, Dex:12.0, HS:12.0"
+Swap70,dist_dex_hs_h,8,0
+Swap70,max_pairwise_dist_h,8,4
+Swap70,three_way_concordant,FALSE,TRUE
+Swap70,classification,Variable,Clock-controlled
+Tab3,row_status,present,absent
+Tef,mean_crp,0,6.66666666666667
+Tef,sd_crp,10.5830052442584,9.23760430703401
+Tef,range_crp,20,16
+Tef,circ_sd_crp,0.900516638500549,1.04814707396821
+Tef,phases,"Osmo:4, Dex:4, HS:12","Osmo:4, Dex:24, HS:12"
+Tef,crp_values,"Osmo:-4.0, Dex:-8.0, HS:12.0","Osmo:-4.0, Dex:12.0, HS:12.0"
+Tef,dist_osmo_dex_h,4,8
+Tef,dist_dex_hs_h,4,0
+Tor1aip2,row_status,present,absent
+Trmt13,mean_crp,0,6.66666666666667
+Trmt13,sd_crp,10.5830052442584,9.23760430703401
+Trmt13,range_crp,20,16
+Trmt13,circ_sd_crp,0.900516638500549,1.04814707396821
+Trmt13,phases,"Osmo:20, Dex:4, HS:20","Osmo:20, Dex:24, HS:20"
+Trmt13,crp_values,"Osmo:12.0, Dex:-8.0, HS:-4.0","Osmo:12.0, Dex:12.0, HS:-4.0"
+Trmt13,dist_osmo_dex_h,4,0
+Trmt13,dist_dex_hs_h,4,8

@@ -37,29 +37,31 @@ library(ComplexHeatmap)
 
 count_matrix <- read.delim("data/raw/dex_raw.csv", header=T, sep=",", row.names=1)
 
-# remove column dex_24h_b which is an outlier
+# Remove the 28 h outlier from batch b.
 count_matrix <- count_matrix %>% dplyr::select(-dex_28h_b)
 
-# The dataset had batch effect so had to remove it before running DESeq2
-batch <- c(rep(1, 12), rep(2, 11), rep(3, 12))
-group <- c(1:12, 1:6, 8:12, 1:12)
-print(group)
+# Match the metadata to the retained count columns before batch correction.
+sampletable <- read.csv("data/meta/dex_meta.csv", row.names = 1)
+stopifnot(setequal(colnames(count_matrix), rownames(sampletable)))
+sampletable <- sampletable[colnames(count_matrix), , drop = FALSE]
+time_levels <- paste0(seq(4L, 48L, by = 4L), "h")
+time_index <- setNames(match(sampletable$time, time_levels), rownames(sampletable))
+batch <- match(sampletable$batch, c("a", "b", "c"))
+stopifnot(!anyNA(time_index), !anyNA(batch))
 
-adjusted <- ComBat_seq(as.matrix(count_matrix), batch=batch, group=group)
+adjusted <- ComBat_seq(as.matrix(count_matrix), batch = batch, group = unname(time_index))
 ```
 
 
 ```{r deseq2_normalization}
 # DESeq2 processing
-sampletable <- read.table("data/meta/dex_meta.csv", header=T, sep=",", row.names=1)
-
 dds <- DESeqDataSetFromMatrix(countData = adjusted,
                               colData = sampletable,
                               design = ~ time)
 
 dds <- dds [rowMeans(counts(dds)) >= 50, ]
 
-dds$condition <- factor(dds$time, levels = c("4h", "8h", "12h", "16h", "20h", "24h", "28h", "32h", "36h", "40h", "44h", "48h"))
+dds$condition <- factor(dds$time, levels = time_levels)
 dds1 <- DESeq(dds)
 norm_counts <- counts(dds1, normalized = TRUE)
 
@@ -69,12 +71,12 @@ norm_counts <- counts(dds1, normalized = TRUE)
 ```{r run_rain_annotate}
 # RAIN circadian analysis
 
-dex <- norm_counts
-col_names <- c("dex_04h_a", "dex_08h_a", "dex_12h_a", "dex_16h_a", "dex_20h_a", "dex_24h_a", "dex_28h_a", "dex_32h_a", "dex_36h_a", "dex_40h_a", "dex_44h_a", "dex_48h_a", "dex_04h_b", "dex_08h_b", "dex_12h_b", "dex_16h_b", "dex_20h_b", "dex_24h_b", "dex_32h_b", "dex_36h_b", "dex_40h_b", "dex_44h_b", "dex_48h_b", "dex_04h_c", "dex_08h_c", "dex_12h_c", "dex_16h_c", "dex_20h_c", "dex_24h_c", "dex_28h_c", "dex_32h_c", "dex_36h_c", "dex_40h_c", "dex_44h_c", "dex_48h_c")
-colnames(dex) <- col_names
-dex <- dex[, order(colnames(dex))]
+rain_time_index <- time_index[colnames(norm_counts)]
+measure_sequence <- tabulate(rain_time_index, nbins = length(time_levels))
+stopifnot(!anyNA(rain_time_index), all(measure_sequence > 0L))
+dex <- norm_counts[, order(rain_time_index), drop = FALSE]
 
-dex_RAIN <- rain(t(dex), deltat=4, period=24, measure.sequence = c(3,3,3,3,3,2,3,3,3,3,3,3),
+dex_RAIN <- rain(t(dex), deltat=4, period=24, measure.sequence = measure_sequence,
                 peak.border=c(0.3, 0.7), method = "longitudinal" , adjp.method='ABH', verbose=TRUE) # independent for mouse sampling,
 
 p_values_dex <- dex_RAIN$pVal
@@ -232,10 +234,10 @@ save_string_enrichment_background_bundle(
 
 ```{r prepare_timeseries_data}
 # Process data frame for plotting in bodyclocks shiny app
-df <- subset(merged, select = -c(Row.names, pVal, phase, peak.shape, period, BH.Q, external_gene_name, description, preferred_symbol))
-col_names2 <- c("01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "07", "08", "09", "10", "11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12","Gene")
-colnames(df) <- col_names2
-data <- pivot_longer(df, cols = !Gene, names_to = "time_point", values_to = "reads")
+data <- merged %>%
+  dplyr::select(Gene = mgi_symbol, all_of(names(time_index))) %>%
+  pivot_longer(cols = !Gene, names_to = "sample", values_to = "reads") %>%
+  mutate(time_point = sprintf("%02d", time_index[sample]))
 
 qval_df <- merged[c("mgi_symbol", "BH.Q")]
 new_pval_names <- c("Gene", "BH.Q")

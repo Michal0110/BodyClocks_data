@@ -1,10 +1,21 @@
 ---
-title: "Chondrocyte comparison analysis"
+title: "`r if (nzchar(params$circacompare_dir)) 'CircaCompare chondrocyte and cartilage figures' else 'Chondrocyte comparison analysis'`"
 output: html_document
+params:
+  circacompare_dir: ""
+  expression_dir: "results/tables"
+  pathway_dir: ""
+  pathway_snapshot: ""
+  export_all_terms: false
+  figure_output: ""
 ---
 
 ```{r setup, include=FALSE}
 knitr::opts_knit$set(root.dir = normalizePath(".."))
+use_circacompare <- nzchar(params$circacompare_dir)
+figure_dir <- if (use_circacompare) "results/circacompare/publication_figures" else "results/publication_figures"
+if (nzchar(params$figure_output)) figure_dir <- params$figure_output
+figure_path <- function(name) file.path(figure_dir, name)
 ```
 
 ```{r load_libraries, message=FALSE, warning=FALSE}
@@ -23,14 +34,24 @@ library(Matrix)
 
 ```{r load_data}
 # ── Read circadian tables ────────────────────────────────────────────────────
-osmo_data      <- read.csv("results/tables/osmo_circ.csv")
-dex_data       <- read.csv("results/tables/dex_circ.csv")
-hs_data        <- read.csv("results/tables/hs_circ.csv")
-cartilage_data <- read.csv("results/tables/wt_cartilage_circ.csv")
+if (use_circacompare) {
+  source("R/circacompare_figure_inputs.R", local = TRUE)
+  cc <- read_circacompare_figure_inputs(params$circacompare_dir, params$expression_dir)
+  osmo_data <- cc$tables$Osmo
+  dex_data <- cc$tables$Dex
+  hs_data <- cc$tables$HS
+  cartilage_data <- cc$tables$Cartilage
+  dataset_list <- cc$plots
+} else {
+  osmo_data      <- read.csv("results/tables/osmo_circ.csv")
+  dex_data       <- read.csv("results/tables/dex_circ.csv")
+  hs_data        <- read.csv("results/tables/hs_circ.csv")
+  cartilage_data <- read.csv("results/tables/wt_cartilage_circ.csv")
 
-# Standardise cartilage column names to match chondrocyte datasets
-cartilage_data <- cartilage_data %>%
-  dplyr::rename(Row.names = CycID)
+  # Standardise cartilage column names to match chondrocyte datasets
+  cartilage_data <- cartilage_data %>%
+    dplyr::rename(Row.names = CycID)
+}
 
 # ── Filter to rhythmic genes ─────────────────────────────────────────────────
 osmo_trimmed      <- osmo_data      %>% filter(BH.Q < 0.05)
@@ -45,20 +66,22 @@ cat("  HS:        ", nrow(hs_trimmed), "\n")
 cat("  Cartilage: ", nrow(cartilage_trimmed), "\n")
 
 # ── Load RDS time-series data for expression plots ───────────────────────────
-hs_plot        <- readRDS("results/shiny_data/mouse/hs/hs_data.rds")
-osmo_plot      <- readRDS("results/shiny_data/mouse/osmo/osmo_data.rds")
-dex_plot       <- readRDS("results/shiny_data/mouse/dex/dex_data.rds")
-cartilage_plot <- readRDS("results/shiny_data/mouse/cartilage_circ/cartilage_wt_data.rds")
+if (!use_circacompare) {
+  hs_plot        <- readRDS("results/shiny_data/mouse/hs/hs_data.rds")
+  osmo_plot      <- readRDS("results/shiny_data/mouse/osmo/osmo_data.rds")
+  dex_plot       <- readRDS("results/shiny_data/mouse/dex/dex_data.rds")
+  cartilage_plot <- readRDS("results/shiny_data/mouse/cartilage_circ/cartilage_wt_data.rds")
 
-dataset_list <- list(
-  HS        = hs_plot,
-  Osmo      = osmo_plot,
-  Dex       = dex_plot,
-  cartilage = cartilage_plot
-)
+  dataset_list <- list(
+    HS        = hs_plot,
+    Osmo      = osmo_plot,
+    Dex       = dex_plot,
+    cartilage = cartilage_plot
+  )
+}
 
 # ── Output directory ─────────────────────────────────────────────────────────
-dir.create("results/publication_figures", recursive = TRUE, showWarnings = FALSE)
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
 ```
 
 ```{r helper_functions}
@@ -84,11 +107,15 @@ multi_dataset_plot <- function(data_list, gene, show_line = TRUE, legend = TRUE)
       legend.title = element_blank()
     ) +
     labs(x = "Circadian Time", y = "Expression", title = gene) +
-    geom_vline(xintercept = 6,  linetype = "dashed", color = "grey", alpha = 0.5) +
-    geom_vline(xintercept = 12, linetype = "dashed", color = "grey", alpha = 0.5) +
+    geom_vline(xintercept = if (use_circacompare) 24 else 6, linetype = "dashed", color = "grey", alpha = 0.5) +
+    geom_vline(xintercept = if (use_circacompare) 48 else 12, linetype = "dashed", color = "grey", alpha = 0.5) +
     geom_point(size = 2) +
     geom_errorbar(aes(ymin = mean - sd, ymax = mean + sd), width = 0.2, alpha = 0.7)
   if (show_line) p <- p + geom_line(linewidth = 0.75)
+  if (use_circacompare) {
+    return(p + scale_x_continuous(breaks = seq(0, 48, by = 12)) +
+             labs(x = "Hours (culture elapsed / cartilage ZT)"))
+  }
   time_breaks <- sort(unique(as.numeric(combined_data$time_point)))
   n_breaks    <- length(time_breaks)
   ct_values   <- seq(4, by = 4, length.out = n_breaks)
@@ -98,6 +125,9 @@ multi_dataset_plot <- function(data_list, gene, show_line = TRUE, legend = TRUE)
 
 plot_multiple_genes <- function(data_list, genes, show_line = TRUE) {
   plots <- lapply(genes, function(gene) multi_dataset_plot(data_list, gene, show_line))
+  if (use_circacompare) {
+    return(wrap_plots(plots, ncol = 3, guides = "collect") & theme(legend.position = "bottom"))
+  }
   wrap_plots(plots, ncol = 3)
 }
 
@@ -115,7 +145,8 @@ create_rose_plot <- function(data, dataset_name) {
     coord_polar(start = -pi/6, direction = 1) +
     scale_x_continuous(
       breaks = c(2, 6, 10, 14, 18, 22),
-      labels = c("CT0/24", "CT4", "CT8", "CT12", "CT16", "CT20"),
+      labels = if (use_circacompare) paste0(c(0, 4, 8, 12, 16, 20), " h") else
+        c("CT0/24", "CT4", "CT8", "CT12", "CT16", "CT20"),
       limits = c(0, 24)
     ) +
     theme_minimal() +
@@ -191,6 +222,7 @@ resolve_reference_file <- function(filename, url, existing_paths = character(),
                                    )) {
   cache_path <- file.path(cache_dir, filename)
   candidates <- unique(c(
+    if (nzchar(params$pathway_dir)) file.path(params$pathway_dir, filename),
     existing_paths,
     file.path("data", "raw", filename),
     cache_path
@@ -356,9 +388,9 @@ calculate_local_enrichment <- function(selected_genes, model) {
   )
 }
 
-format_local_enrichment <- function(selected_genes, model, fdr_cutoff = 0.05) {
+format_local_enrichment <- function(selected_genes, model, fdr_cutoff = 0.05, all_terms = FALSE) {
   stats <- calculate_local_enrichment(selected_genes, model)
-  keep <- stats$hits > 0 & stats$fdr <= fdr_cutoff
+  keep <- all_terms | (stats$hits > 0 & stats$fdr <= fdr_cutoff)
   n_keep <- sum(keep)
 
   data.frame(
@@ -431,13 +463,13 @@ build_pathway_models <- function(annotation_map, background_genes, categories,
 }
 
 calculate_enrichment_lists <- function(gene_sets, pathway_models, categories,
-                                       fdr_cutoff = 0.05) {
+                                       fdr_cutoff = 0.05, all_terms = FALSE) {
   setNames(lapply(names(gene_sets), function(ds_name) {
     bind_rows(lapply(categories, function(cat_code) {
       format_local_enrichment(
         gene_sets[[ds_name]],
         pathway_models[[cat_code]],
-        fdr_cutoff = fdr_cutoff
+        fdr_cutoff = fdr_cutoff, all_terms = all_terms
       )
     }))
   }), names(gene_sets))
@@ -651,7 +683,7 @@ make_bar_chart <- function(data, cat, dataset_colors) {
 }
 ```
 
-```{r Fig1C_overlapping_genes}
+```{r Fig1C_overlapping_genes, fig.width=if (use_circacompare) 12 else 7, fig.height=if (use_circacompare) 20 else 5}
 # ── 3-way stress overlap (by Ensembl ID) ────────────────────────────────────
 stress_overlap_genes <- Reduce(intersect, list(
   osmo_trimmed$Row.names,
@@ -676,10 +708,12 @@ ordered_genes  <- c(
 p_overlapping <- plot_multiple_genes(dataset_list, ordered_genes, show_line = TRUE)
 p_overlapping
 
-ggsave("results/publication_figures/Fig1C_overlapping_genes.pdf",
-       plot = p_overlapping, width = 9, height = 13)
-ggsave("results/publication_figures/Fig1C_overlapping_genes.png",
-       plot = p_overlapping, width = 9, height = 13)
+ggsave(figure_path("Fig1C_overlapping_genes.pdf"),
+       plot = p_overlapping, width = if (use_circacompare) 12 else 9,
+       height = if (use_circacompare) 2.3 * ceiling(length(ordered_genes) / 3) + 1 else 13)
+ggsave(figure_path("Fig1C_overlapping_genes.png"),
+       plot = p_overlapping, width = if (use_circacompare) 12 else 9,
+       height = if (use_circacompare) 2.3 * ceiling(length(ordered_genes) / 3) + 1 else 13)
 ```
 
 ```{r Fig2A_rose_plots_combined}
@@ -692,6 +726,10 @@ phase_distribution_data <- bind_rows(
 ) %>%
   mutate(phase_circular = ifelse(phase == 24, 0, phase))
 
+# Nearest four-hour bin, centred on its displayed hour, for the rose plot only.
+if (use_circacompare) {
+  phase_distribution_data$phase_circular <- (4 * floor((phase_distribution_data$phase + 2) / 4)) %% 24
+}
 phase_counts <- phase_distribution_data %>%
   group_by(dataset, phase_circular) %>%
   summarise(count = n(), .groups = "drop")
@@ -702,11 +740,15 @@ p_rose_hs        <- create_rose_plot(phase_counts, "Heat Shock")
 p_rose_cartilage <- create_rose_plot(phase_counts, "Cartilage")
 
 p_rose_combined <- (p_rose_osmo | p_rose_dex) / (p_rose_hs | p_rose_cartilage)
+if (use_circacompare) {
+  p_rose_combined <- p_rose_combined + plot_annotation(
+    caption = "Peaks are grouped in 4-hour bins centred on each label.\nCultures use elapsed hours and cartilage uses Zeitgeber time.")
+}
 p_rose_combined
 
-ggsave("results/publication_figures/Fig2A_rose_plots_combined.pdf",
+ggsave(figure_path("Fig2A_rose_plots_combined.pdf"),
        plot = p_rose_combined, width = 10, height = 10)
-ggsave("results/publication_figures/Fig2A_rose_plots_combined.png",
+ggsave(figure_path("Fig2A_rose_plots_combined.png"),
        plot = p_rose_combined, width = 8, height = 8, dpi = 600)
 ```
 
@@ -781,7 +823,7 @@ supp2 <- bind_rows(results_05, results_01) %>%
   relocate(Significant_BH, .after = Significant)
 
 write.csv(supp2,
-          "results/publication_figures/Supplementary_table_2.csv",
+          figure_path("Supplementary_table_2.csv"),
           row.names = FALSE)
 cat("Supplementary_table_2.csv saved.\n")
 print(results_05)
@@ -812,10 +854,10 @@ p_jaccard <- pheatmap(
   fontsize         = 12
 )
 
-ggsave("results/publication_figures/Fig1D_jaccard_4way_comparison.pdf",
+ggsave(figure_path("Fig1D_jaccard_4way_comparison.pdf"),
        plot = p_jaccard, width = 6, height = 5)
-ggsave("results/publication_figures/Fig1D_jaccard_4way_comparison.png",
-       plot = p_jaccard, width = 6, height = 5, dpi = 300)
+ggsave(figure_path("Fig1D_jaccard_4way_comparison.png"),
+       plot = p_jaccard, width = 6, height = 5, dpi = 300, bg = if (use_circacompare) "white" else NULL)
 ```
 
 ```{r crp_setup}
@@ -850,7 +892,7 @@ cat("=== CORE CLOCK GENE PHASES ===\n")
 print(clock_wide)
 
 write.csv(clock_wide,
-          "results/publication_figures/Supplementary_table_3.csv",
+          figure_path("Supplementary_table_3.csv"),
           row.names = FALSE)
 
 # ── Compute clock-relative phases (CRP) for all datasets ────────────────────
@@ -927,7 +969,7 @@ n_perm_3way   <- 10000
 seed_3way     <- 42
 
 set.seed(seed_3way)
-perm_3way_pcts <- replicate(n_perm_3way, {
+perm_3way_counts <- replicate(n_perm_3way, {
   dex_perm <- sample(three_way_gene_results$Dex)
   hs_perm  <- sample(three_way_gene_results$HS)
 
@@ -939,10 +981,12 @@ perm_3way_pcts <- replicate(n_perm_3way, {
     dist_osmo_hs <= circ_dist_threshold_3way &
     dist_dex_hs <= circ_dist_threshold_3way
 
-  100 * mean(concordant)
+  sum(concordant)
 })
+perm_3way_pcts <- 100 * perm_3way_counts / n_genes_3way
 
-n_perm_as_or_more_extreme <- sum(perm_3way_pcts >= obs_3way_pct)
+# Use integer counts so ties always contribute to the upper tail.
+n_perm_as_or_more_extreme <- sum(perm_3way_counts >= obs_3way_n)
 # Add the observed arrangement to the Monte Carlo reference distribution so
 # that the estimated permutation p-value cannot be zero.
 perm_3way_p <- (n_perm_as_or_more_extreme + 1) / (n_perm_3way + 1)
@@ -964,7 +1008,7 @@ three_way_summary <- data.frame(
 
 write.csv(
   three_way_summary,
-  "results/publication_figures/crp_3way_summary.csv",
+  figure_path("crp_3way_summary.csv"),
   row.names = FALSE
 )
 
@@ -1006,7 +1050,7 @@ crp_consistency <- crp_data %>%
 
 # For phases restricted to the 4 h RAIN grid, the historical circular-SD
 # threshold and the explicit all-pairwise-distance criterion should agree.
-if (any((crp_consistency$circ_sd_crp <= consistency_threshold) !=
+if (!use_circacompare && any((crp_consistency$circ_sd_crp <= consistency_threshold) !=
         crp_consistency$three_way_concordant)) {
   stop("Circular-SD and explicit three-way CRP classifications disagree.")
 }
@@ -1017,7 +1061,7 @@ cat(sprintf("\nClock-controlled: %d  |  Variable: %d\n",
 
 # ── Supplementary Table 1 ────────────────────────────────────────────────────
 write.csv(crp_consistency,
-          "results/publication_figures/Supplementary_table_1.csv",
+          figure_path("Supplementary_table_1.csv"),
           row.names = FALSE)
 cat("Supplementary_table_1.csv saved.\n")
 ```
@@ -1057,14 +1101,14 @@ if (length(consistent_genes) > 0) {
   )
 
   fig_h <- max(4, length(consistent_genes) * 0.15 + 2)
-  ggsave("results/publication_figures/Fig2E_clock_relative_phase_heatmap.pdf",
+  ggsave(figure_path("Fig2E_clock_relative_phase_heatmap.pdf"),
          plot = p_crp_heatmap, width = 6, height = fig_h)
-  ggsave("results/publication_figures/Fig2E_clock_relative_phase_heatmap.png",
-         plot = p_crp_heatmap, width = 6, height = fig_h, dpi = 300)
+  ggsave(figure_path("Fig2E_clock_relative_phase_heatmap.png"),
+         plot = p_crp_heatmap, width = 6, height = fig_h, dpi = 300, bg = if (use_circacompare) "white" else NULL)
 }
 ```
 
-```{r crp_pairwise}
+```{r crp_pairwise, fig.width=if (use_circacompare) 16 else 7, fig.height=if (use_circacompare) 9 else 5}
 circ_dist_threshold <- 4  # hours
 
 ds_pairs <- list(
@@ -1161,7 +1205,7 @@ pairwise_summary <- pairwise_summary %>%
     by = "pair")
 
 write.csv(pairwise_summary,
-          "results/publication_figures/crp_pairwise_summary.csv",
+          figure_path("crp_pairwise_summary.csv"),
           row.names = FALSE)
 
 # ── Figure: Fig2C_crp_pairwise_proportion ─────────────────────────────────────
@@ -1196,10 +1240,10 @@ p_bar <- ggplot(pairwise_summary, aes(x = pair)) +
   theme(axis.text.x = element_text(size = 10, angle = 30, hjust = 1))
 
 p_bar
-ggsave("results/publication_figures/Fig2C_crp_pairwise_proportion.pdf",
-       plot = p_bar, width = 5, height = 5)
-ggsave("results/publication_figures/Fig2C_crp_pairwise_proportion.png",
-       plot = p_bar, width = 5, height = 5, dpi = 300)
+ggsave(figure_path("Fig2C_crp_pairwise_proportion.pdf"),
+       plot = p_bar, width = if (use_circacompare) 9 else 5, height = 5)
+ggsave(figure_path("Fig2C_crp_pairwise_proportion.png"),
+       plot = p_bar, width = if (use_circacompare) 9 else 5, height = 5, dpi = 300)
 
 # ── Figure: Fig2B_pairwise_CRP_comparison ───────────────────────────────────────────
 scatter_plots <- list()
@@ -1227,7 +1271,8 @@ for (pair in ds_pairs) {
                 linetype = "dotted", colour = "grey40") +
     scale_colour_manual(values = c("Clock-controlled" = "#4C9BE8",
                                    "Variable"         = "#E87B4C")) +
-    scale_size_area(name = "Gene Count", max_size = 15, breaks = c(1, 3, 5, 10)) +
+    scale_size_area(name = "Gene Count", max_size = if (use_circacompare) 1.4 else 15,
+                    breaks = c(1, 3, 5, 10)) +
     scale_x_continuous(breaks = seq(-12, 12, by = 4)) +
     scale_y_continuous(breaks = seq(-12, 12, by = 4)) +
     coord_fixed(ratio = 1, xlim = c(-13, 13), ylim = c(-13, 13)) +
@@ -1240,7 +1285,7 @@ for (pair in ds_pairs) {
           legend.text   = element_text(size = 12),
           legend.title  = element_text(size = 12)) +
     guides(colour = guide_legend(override.aes = list(size = 4)),
-           size   = guide_legend(override.aes = list(alpha = 0.8))) +
+           size   = if (use_circacompare) "none" else guide_legend(override.aes = list(alpha = 0.8))) +
     labs(title    = sprintf("%s vs %s", d1, d2),
          subtitle = sprintf("n = %d genes | clock-controlled: %d (%.1f%%)",
                             n_total, n_controlled, 100 * n_controlled / n_total),
@@ -1251,11 +1296,14 @@ for (pair in ds_pairs) {
 }
 
 p_scatter_combined <- wrap_plots(scatter_plots, ncol = 3)
+if (use_circacompare) {
+  p_scatter_combined <- p_scatter_combined + plot_layout(guides = "collect") & theme(legend.position = "bottom")
+}
 p_scatter_combined
 
-ggsave("results/publication_figures/Fig2B_pairwise_CRP_comparison.pdf",
+ggsave(figure_path("Fig2B_pairwise_CRP_comparison.pdf"),
        plot = p_scatter_combined, width = 17, height = 11)
-ggsave("results/publication_figures/Fig2B_pairwise_CRP_comparison.png",
+ggsave(figure_path("Fig2B_pairwise_CRP_comparison.png"),
        plot = p_scatter_combined, width = 17, height = 11, dpi = 300)
 ```
 
@@ -1270,110 +1318,9 @@ category_names <- c(
 min_pathway_size <- 5L
 pathway_fdr_cutoff <- 0.05
 
-string_terms_path <- resolve_reference_file(
-  "10090.protein.enrichment.terms.v12.0.txt.gz",
-  paste0(
-    "https://stringdb-downloads.org/download/",
-    "protein.enrichment.terms.v12.0/",
-    "10090.protein.enrichment.terms.v12.0.txt.gz"
-  )
-)
-string_aliases_path <- resolve_reference_file(
-  "10090.protein.aliases.v12.0.txt.gz",
-  paste0(
-    "https://stringdb-downloads.org/download/protein.aliases.v12.0/",
-    "10090.protein.aliases.v12.0.txt.gz"
-  ),
-  existing_paths = "results/cache/stringdb/10090.protein.aliases.v12.0.txt.gz"
-)
-kegg_pathway_names_path <- resolve_reference_file(
-  "mmu_kegg_pathway_names_raw.tsv",
-  "https://rest.kegg.jp/list/pathway/mmu"
-)
-kegg_pathway_genes_path <- resolve_reference_file(
-  "mmu_kegg_pathway_genes_raw.tsv",
-  "https://rest.kegg.jp/link/mmu/pathway"
-)
-
-string_terms <- read_filtered_tsv_gz(
-  string_terms_path,
-  pattern = "\t(Reactome Pathways|WikiPathways)\t",
-  column_names = c(
-    "string_protein_id", "string_category", "term", "description"
-  )
-)
-
-string_aliases <- read_filtered_tsv_gz(
-  string_aliases_path,
-  pattern = "\t(Ensembl_gene|KEGG_GENEID)$",
-  column_names = c("string_protein_id", "alias", "source")
-)
-
-# Collapse protein isoforms to unique Ensembl gene-to-term relationships.
-protein_gene_map <- string_aliases %>%
-  filter(source == "Ensembl_gene", grepl("^ENSMUSG", alias)) %>%
-  transmute(
-    string_protein_id,
-    gene_id = normalise_ensembl_gene_ids(alias)
-  ) %>%
-  filter(!is.na(gene_id)) %>%
-  distinct()
-
-string_annotation_map <- string_terms %>%
-  filter(string_category %in% c("Reactome Pathways", "WikiPathways")) %>%
-  inner_join(protein_gene_map, by = "string_protein_id") %>%
-  transmute(
-    gene_id,
-    category = recode(
-      string_category,
-      "Reactome Pathways" = "RCTM",
-      "WikiPathways" = "WikiPathways"
-    ),
-    term,
-    description
-  ) %>%
-  distinct()
-
-kegg_pathway_genes <- read.delim(
-  kegg_pathway_genes_path,
-  header = FALSE, sep = "\t", quote = "", comment.char = "",
-  col.names = c("pathway_id", "kegg_gene_id"),
-  stringsAsFactors = FALSE
-) %>%
-  transmute(
-    term = sub("^path:", "", pathway_id),
-    ncbi_gene_id = sub("^mmu:", "", kegg_gene_id)
-  ) %>%
-  distinct()
-
-kegg_pathway_names <- read.delim(
-  kegg_pathway_names_path,
-  header = FALSE, sep = "\t", quote = "", comment.char = "",
-  col.names = c("term", "description"),
-  stringsAsFactors = FALSE
-) %>%
-  mutate(description = sub(
-    " - Mus musculus \\(house mouse\\)$", "", description
-  )) %>%
-  distinct(term, .keep_all = TRUE)
-
-kegg_protein_map <- string_aliases %>%
-  filter(source == "KEGG_GENEID") %>%
-  transmute(string_protein_id, ncbi_gene_id = alias) %>%
-  distinct()
-
-kegg_annotation_map <- kegg_pathway_genes %>%
-  inner_join(kegg_protein_map, by = "ncbi_gene_id") %>%
-  inner_join(protein_gene_map, by = "string_protein_id") %>%
-  inner_join(kegg_pathway_names, by = "term") %>%
-  transmute(gene_id, category = "KEGG", term, description) %>%
-  distinct()
-
-pathway_annotation_map <- bind_rows(
-  kegg_annotation_map,
-  string_annotation_map
-) %>%
-  distinct(gene_id, category, term, .keep_all = TRUE)
+source("R/paper_pathway_annotations.R", local = TRUE)
+annotation <- if (nzchar(params$pathway_snapshot)) readRDS(params$pathway_snapshot) else read_paper_pathway_annotations()
+pathway_annotation_map <- annotation$map
 
 # Normalize the tested and rhythmic gene sets once for the two retained
 # background strategies.
@@ -1381,7 +1328,7 @@ normalised_gene_universes <- lapply(
   gene_universes,
   function(x) unique(na.omit(normalise_ensembl_gene_ids(x)))
 )
-mapped_genes <- unique(na.omit(protein_gene_map$gene_id))
+mapped_genes <- annotation$mapped
 normalised_rhythmic_genes <- lapply(
   gene_lists,
   function(x) unique(na.omit(normalise_ensembl_gene_ids(x)))
@@ -1417,6 +1364,11 @@ strategy_seeds <- c(
 # genes tested in that pair. A dataset can therefore have different enriched
 # terms in different pairwise contexts.
 cat("\n=== PAIR-SPECIFIC COMMON BACKGROUNDS ===\n")
+full_term_tests <- list()
+collect_term_tests <- function(gene_sets, models, context, background, size) {
+  tables <- calculate_enrichment_lists(gene_sets, models, categories, all_terms = TRUE)
+  format_enrichment_collection(tables, background, strategy_descriptions[[background]], context, size)
+}
 pair_specific_enrichment_outputs <- list()
 pair_specific_overlap_outputs <- list()
 
@@ -1455,6 +1407,10 @@ for (pair_index in seq_along(ds_pairs)) {
     fdr_cutoff = pathway_fdr_cutoff
   )
 
+  if (params$export_all_terms) {
+    full_term_tests[[pair_label]] <- collect_term_tests(pair_gene_sets, pair_models, pair_label,
+                                                      "pair_specific_common", length(pair_background))
+  }
   pair_specific_enrichment_outputs[[pair_label]] <-
     format_enrichment_collection(
       pair_enrichment_list,
@@ -1512,6 +1468,12 @@ all_mouse_enrichment_list <- calculate_enrichment_lists(
   categories,
   fdr_cutoff = pathway_fdr_cutoff
 )
+if (params$export_all_terms) {
+  full_term_tests[["All_pairs"]] <- collect_term_tests(all_mouse_rhythmic_gene_sets, all_mouse_pathway_models,
+                                                       "All_pairs", "all_mouse", length(all_mouse_background))
+  con <- gzfile(figure_path("all_eligible_pathway_tests.csv.gz"), "wt")
+  tryCatch(write.csv(bind_rows(full_term_tests), con, row.names = FALSE), finally = close(con))
+}
 all_mouse_enrichment_output <- format_enrichment_collection(
   all_mouse_enrichment_list,
   "all_mouse",
@@ -1566,24 +1528,18 @@ local_pathway_enrichment <- all_mouse_enrichment_output %>%
 
 write.csv(
   local_pathway_enrichment,
-  "results/publication_figures/local_pathway_enrichment.csv",
+  figure_path("local_pathway_enrichment.csv"),
   row.names = FALSE
 )
 
 write.csv(
   pathway_enrichment_background_comparison,
-  paste0(
-    "results/publication_figures/",
-    "pathway_enrichment_background_comparison.csv"
-  ),
+  figure_path("pathway_enrichment_background_comparison.csv"),
   row.names = FALSE
 )
 write.csv(
   pathway_overlap_background_comparison,
-  paste0(
-    "results/publication_figures/",
-    "pathway_overlap_background_comparison.csv"
-  ),
+  figure_path("pathway_overlap_background_comparison.csv"),
   row.names = FALSE
 )
 
@@ -1616,7 +1572,7 @@ supplementary_table_4 <- pathway_overlap_background_comparison %>%
 
 write.csv(
   supplementary_table_4,
-  "results/publication_figures/Supplementary_table_4.csv",
+  figure_path("Supplementary_table_4.csv"),
   row.names = FALSE
 )
 cat("Pathway background-comparison tables saved.\n")
@@ -1698,15 +1654,17 @@ for (cat_code in fig_cats) {
   }
 
   p_jac <- pheatmap(jac_mat,
+    main = if (use_circacompare) cat_name else NA,
     display_numbers = jac_labels,
     cluster_rows    = FALSE, cluster_cols = FALSE,
     color           = colorRampPalette(c("white", "orange", "red"))(100),
     fontsize_number = 20, fontsize = 20)
 
-  ggsave(sprintf("results/publication_figures/Fig3B_enrichment_jaccard_%s.pdf",  cat_code),
+  if (use_circacompare) print(p_jac)
+  ggsave(figure_path(sprintf("Fig3B_enrichment_jaccard_%s.pdf", cat_code)),
          plot = p_jac, width = 7, height = 6)
-  ggsave(sprintf("results/publication_figures/Fig3B_enrichment_jaccard_%s.png", cat_code),
-         plot = p_jac, width = 7, height = 6, dpi = 300)
+  ggsave(figure_path(sprintf("Fig3B_enrichment_jaccard_%s.png", cat_code)),
+         plot = p_jac, width = 7, height = 6, dpi = 300, bg = if (use_circacompare) "white" else NULL)
 }
 
 # ── Figure: Supplementary_Figure1 ───────────────────────────────────────────
@@ -1724,9 +1682,9 @@ p_tile_combined <- p_tile_kegg / p_tile_rctm / p_tile_wiki +
 
 p_tile_combined
 
-ggsave("results/publication_figures/Supplementary_Figure1.pdf",
+ggsave(figure_path("Supplementary_Figure1.pdf"),
        plot = p_tile_combined, width = 10, height = 18)
-ggsave("results/publication_figures/Supplementary_Figure1.png",
+ggsave(figure_path("Supplementary_Figure1.png"),
        plot = p_tile_combined, width = 8, height = 16, dpi = 300)
 
 # ── Figure: Fig3A_enrichment_barchart ─────────────────────────────────────────────
@@ -1746,8 +1704,8 @@ p_bar_combined <- p_bar_kegg / p_bar_rctm / p_bar_wiki +
 
 p_bar_combined
 
-ggsave("results/publication_figures/Fig3A_enrichment_barchart.pdf",
+ggsave(figure_path("Fig3A_enrichment_barchart.pdf"),
        plot = p_bar_combined, width = 7, height = 10)
-ggsave("results/publication_figures/Fig3A_enrichment_barchart.png",
+ggsave(figure_path("Fig3A_enrichment_barchart.png"),
        plot = p_bar_combined, width = 7, height = 10, dpi = 300)
 ```
