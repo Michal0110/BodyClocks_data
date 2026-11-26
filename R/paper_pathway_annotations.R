@@ -25,6 +25,8 @@ read_paper_pathway_annotations <- function() {
     "https://rest.kegg.jp/link/mmu/pathway"
   )
 
+
+  # Retain the two STRING pathway categories used in the paper and the ID aliases needed below.
   string_terms <- read_filtered_tsv_gz(
     string_terms_path,
     pattern = "\t(Reactome Pathways|WikiPathways)\t",
@@ -38,6 +40,7 @@ read_paper_pathway_annotations <- function() {
     pattern = "\t(Ensembl_gene|KEGG_GENEID)$",
     column_names = c("string_protein_id", "alias", "source")
   )
+
 
   # Collapse protein isoforms to unique Ensembl gene-to-term relationships.
   protein_gene_map <- string_aliases %>%
@@ -64,6 +67,9 @@ read_paper_pathway_annotations <- function() {
     ) %>%
     distinct()
 
+
+  # KEGG supplies pathway membership in mouse NCBI gene IDs. Strip the namespace
+  # prefixes before joining to the KEGG aliases in STRING.
   kegg_pathway_genes <- read.delim(
     kegg_pathway_genes_path,
     header = FALSE, sep = "\t", quote = "", comment.char = "",
@@ -87,6 +93,7 @@ read_paper_pathway_annotations <- function() {
     )) %>%
     distinct(term, .keep_all = TRUE)
 
+  # Use STRING protein IDs to link KEGG's NCBI gene IDs to Ensembl gene IDs.
   kegg_protein_map <- string_aliases %>%
     filter(source == "KEGG_GENEID") %>%
     transmute(string_protein_id, ncbi_gene_id = alias) %>%
@@ -99,6 +106,9 @@ read_paper_pathway_annotations <- function() {
     transmute(gene_id, category = "KEGG", term, description) %>%
     distinct()
 
+
+  # Keep one entry per gene, category and pathway. The all-mouse background includes
+  # all mapped Ensembl genes, including genes without a term in these categories.
   pathway_annotation_map <- bind_rows(
     kegg_annotation_map,
     string_annotation_map

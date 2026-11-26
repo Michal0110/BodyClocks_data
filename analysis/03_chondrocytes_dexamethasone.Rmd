@@ -37,10 +37,11 @@ library(ComplexHeatmap)
 
 count_matrix <- read.delim("data/raw/dex_raw.csv", header=T, sep=",", row.names=1)
 
-# Remove the 28 h outlier from batch b.
+# Exclude dex_28h_b, the original outlier. The batch-b sample at 24 h is retained.
 count_matrix <- count_matrix %>% dplyr::select(-dex_28h_b)
 
-# Match the metadata to the retained count columns before batch correction.
+# Use sample IDs throughout. The submitted RAIN grouping placed dex_24h_c at 28 h,
+# while the plot labelled dex_24h_b as 28 h. The metadata place both samples at 24 h.
 sampletable <- read.csv("data/meta/dex_meta.csv", row.names = 1)
 stopifnot(setequal(colnames(count_matrix), rownames(sampletable)))
 sampletable <- sampletable[colnames(count_matrix), , drop = FALSE]
@@ -49,6 +50,7 @@ time_index <- setNames(match(sampletable$time, time_levels), rownames(sampletabl
 batch <- match(sampletable$batch, c("a", "b", "c"))
 stopifnot(!anyNA(time_index), !anyNA(batch))
 
+# Preserve variation between sampling times when removing the batch effect.
 adjusted <- ComBat_seq(as.matrix(count_matrix), batch = batch, group = unname(time_index))
 ```
 
@@ -69,18 +71,24 @@ norm_counts <- counts(dds1, normalized = TRUE)
 
 
 ```{r run_rain_annotate}
-# RAIN circadian analysis
+# RAIN expects observations grouped by time and the replicate count at each time.
+# Dropping dex_28h_b leaves three replicates at 24 h and two at 28 h.
 
 rain_time_index <- time_index[colnames(norm_counts)]
 measure_sequence <- tabulate(rain_time_index, nbins = length(time_levels))
 stopifnot(!anyNA(rain_time_index), all(measure_sequence > 0L))
 dex <- norm_counts[, order(rain_time_index), drop = FALSE]
 
-dex_RAIN <- rain(t(dex), deltat=4, period=24, measure.sequence = measure_sequence,
-                peak.border=c(0.3, 0.7), method = "longitudinal" , adjp.method='ABH', verbose=TRUE) # independent for mouse sampling,
+dex_RAIN <- rain(
+  t(dex), deltat = 4, period = 24,  # Four-hour sampling grid, testing a 24 h rhythm.
+  measure.sequence = measure_sequence,
+  peak.border = c(0.3, 0.7), method = "longitudinal",  # Retain the manuscript's waveform search and design.
+  adjp.method = 'ABH', verbose = TRUE
+)
 
 p_values_dex <- dex_RAIN$pVal
 
+# The exported rhythmicity calls use BH across the returned gene-level p values.
 dex_RAIN$BH.Q <- p.adjust(p_values_dex, method = "BH")
 
 dex_circ <- merge(norm_counts, dex_RAIN, by = 0, all.x = TRUE)
@@ -233,7 +241,8 @@ save_string_enrichment_background_bundle(
 ```
 
 ```{r prepare_timeseries_data}
-# Process data frame for plotting in bodyclocks shiny app
+# Look up each plotted replicate by its sample ID. The app uses two-digit time indices
+# (06 for 24 h and 07 for 28 h), so generate those labels from the same timing used by RAIN.
 data <- merged %>%
   dplyr::select(Gene = mgi_symbol, all_of(names(time_index))) %>%
   pivot_longer(cols = !Gene, names_to = "sample", values_to = "reads") %>%

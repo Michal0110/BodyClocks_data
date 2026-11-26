@@ -2,12 +2,12 @@
 title: "`r if (nzchar(params$circacompare_dir)) 'CircaCompare chondrocyte and cartilage figures' else 'Chondrocyte comparison analysis'`"
 output: html_document
 params:
-  circacompare_dir: ""
-  expression_dir: "results/tables"
-  pathway_dir: ""
-  pathway_snapshot: ""
-  export_all_terms: false
-  figure_output: ""
+  circacompare_dir: ""          # Empty selects RAIN. Otherwise use the single-series fits here.
+  expression_dir: "results/tables"  # Normalised inputs for the CircaCompare expression traces.
+  pathway_dir: ""               # Optional directory containing the raw annotation references.
+  pathway_snapshot: ""          # Precomputed gene-to-term map used by both revision methods.
+  export_all_terms: false       # Include all eligible term tests in an additional CSV when true.
+  figure_output: ""             # Override the method-specific output directory.
 ---
 
 ```{r setup, include=FALSE}
@@ -1315,8 +1315,8 @@ category_names <- c(
   RCTM = "Reactome",
   WikiPathways = "WikiPathways"
 )
-min_pathway_size <- 5L
-pathway_fdr_cutoff <- 0.05
+min_pathway_size <- 5L      # Minimum distinct annotated genes in the chosen background.
+pathway_fdr_cutoff <- 0.05  # Enriched terms pass BH FDR ≤ 0.05 within the dataset and category.
 
 source("R/paper_pathway_annotations.R", local = TRUE)
 annotation <- if (nzchar(params$pathway_snapshot)) readRDS(params$pathway_snapshot) else read_paper_pathway_annotations()
@@ -1365,6 +1365,10 @@ strategy_seeds <- c(
 # terms in different pairwise contexts.
 cat("\n=== PAIR-SPECIFIC COMMON BACKGROUNDS ===\n")
 full_term_tests <- list()
+
+
+# Keep the background and pair with each test, including terms with zero hits.
+# These rows let the reviewer compare the same eligible hypotheses under both detectors.
 collect_term_tests <- function(gene_sets, models, context, background, size) {
   tables <- calculate_enrichment_lists(gene_sets, models, categories, all_terms = TRUE)
   format_enrichment_collection(tables, background, strategy_descriptions[[background]], context, size)
