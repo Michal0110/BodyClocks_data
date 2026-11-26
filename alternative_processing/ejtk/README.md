@@ -24,7 +24,7 @@ Two culture pairs showed above-chance overlap before clock exclusion. None passe
 
 ## Bmal1-relative phase
 
-Dex–HS was the only pair with shared calls and a rhythmic Bmal1 anchor in both studies. Nine of 15 genes peaked within four hours after alignment (60%, shuffled mean 37.1%, 55 of 1,000 permutations at least as concordant, p = 0.055, six-pair BH q = 0.330). Excluding Bmal1 gave 8/14 (q = 0.510). Within the clock panel, 5/7 were concordant (q = 0.720). Osmo Bmal1 had q = 0.0618. The primary three-culture phase statistic was therefore unavailable. In the sensitivity analysis using the measured Osmo Bmal1 phase, 0/6 shared clock genes met all three pairwise distance criteria (p = 1). [Anchor phases](results/bmal1.csv) · [Phase tests](results/phase_tests.csv) · [Per-gene classifications](results/phase_genes.csv)
+Dex–HS was the only pair with shared calls and a rhythmic Bmal1 anchor in both studies. Nine of 15 genes peaked within four hours after alignment (60%, shuffled mean 37.1%, 55 of 1,000 permutations at least as concordant, p = 0.055, six-pair BH q = 0.330). Excluding Bmal1 gave 8/14 (q = 0.510). Within the clock panel, 5/7 were concordant (q = 0.720). Osmo Bmal1 had q = 0.0618. The primary three-culture phase statistic was therefore unavailable. In the sensitivity analysis using the measured Osmo Bmal1 phase, 0/6 shared clock genes met all three pairwise distance criteria (p = 1). [Phase difference for each shared gene](figures/clock_relative_phase.pdf) · [Anchor phases](results/bmal1.csv) · [Phase tests](results/phase_tests.csv) · [Per-gene classifications](results/phase_genes.csv)
 
 ## Reproduction
 
@@ -39,6 +39,7 @@ python3 "$p/verify_calls.py"
 Rscript revision/compare_focal.R eJTK "$p/calls" "$p/results"
 Rscript revision/plot_sensitivity.R eJTK "$p/results" "$p/figures"
 Rscript revision/plot_venn.R "$p/results" "$p/figures"
+Rscript "$p/plot_phase.R"
 
 # To repeat the fit into a fresh output directory
 git clone https://github.com/alanlhutchison/empirical-JTK_CYCLE-with-asymmetry.git /tmp/ejtk-upstream
