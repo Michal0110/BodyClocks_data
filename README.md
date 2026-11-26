@@ -176,3 +176,5 @@ and `data_manifest.csv`.
 ## Manuscript revision
 
 [Corrected Dex RAIN, figure replacement checklist and reproducible inputs](revision/README.md)
+
+[CircaCompare reviewer summary, test-by-test comparison, calls and manuscript figures](alternative_processing/circacompare/README.md)

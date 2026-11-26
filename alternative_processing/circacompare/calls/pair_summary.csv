@@ -1,0 +1,13 @@
+"first","second","family","shared_tested","eligible","fitted","mesor_q05","amplitude_q05","phase_q05"
+"osmo","dex","both_rhythmic_set",11718,686,686,603,7,161
+"osmo","dex","nominal_set",11718,2674,2674,2338,17,524
+"osmo","hs","both_rhythmic_set",11807,1273,1273,1008,0,289
+"osmo","hs","nominal_set",11807,3163,3163,2500,0,621
+"osmo","cartilage_wt","both_rhythmic_set",11063,240,240,200,59,145
+"osmo","cartilage_wt","nominal_set",11063,1847,1847,1635,270,864
+"dex","hs","both_rhythmic_set",12163,837,837,581,0,426
+"dex","hs","nominal_set",12163,2874,2874,1878,0,1174
+"dex","cartilage_wt","both_rhythmic_set",11046,194,194,180,146,149
+"dex","cartilage_wt","nominal_set",11046,1831,1831,1669,1180,961
+"hs","cartilage_wt","both_rhythmic_set",11079,367,367,308,145,243
+"hs","cartilage_wt","nominal_set",11079,2139,2139,1856,591,1082

@@ -1,0 +1,11 @@
+                fits     n  retries  max_abs_p_error  max_phase_error_hours
+                osmo 12398       39         0.000035               0.003537
+                 dex 12323       46         0.000034               0.007412
+                  hs 12375       43         0.000037               0.002078
+        cartilage_wt 12559       12         0.000021               0.001263
+         osmo_vs_dex  2674        2         0.000060               0.003729
+          osmo_vs_hs  3163        1         0.000160               0.008554
+osmo_vs_cartilage_wt  1847        1         0.000060               0.001039
+           dex_vs_hs  2874        1         0.000111               0.005068
+ dex_vs_cartilage_wt  1831        1         0.000244               0.309590
+  hs_vs_cartilage_wt  2139        2         0.000248               0.021725
