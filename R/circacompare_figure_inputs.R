@@ -7,6 +7,9 @@ read_circacompare_figure_inputs <- function(fit_dir, expression_dir) {
   stopifnot(setequal(inputs$dataset, ids), !anyDuplicated(inputs$dataset))
   expression <- list()
   tables <- list()
+
+
+  # Check the exact expression input for each fit, including the corrected Dex sample layout.
   for (label in names(ids)) {
     d <- ids[[label]]
     info <- inputs[inputs$dataset == d, ]
@@ -14,6 +17,8 @@ read_circacompare_figure_inputs <- function(fit_dir, expression_dir) {
     stopifnot(digest::digest(file = path, algo = "sha256") == info$sha256)
     x <- read.csv(path, check.names = FALSE)
     gene_ids <- if (d == "cartilage_wt") x$CycID else x$Row.names
+
+    # Join by Ensembl ID before exposing the columns expected by the original RAIN notebook.
     fits <- read.csv(file.path(fit_dir, paste0("single_", d, ".csv")))
     stopifnot(!anyNA(gene_ids), !anyDuplicated(gene_ids), !anyDuplicated(fits$ensembl_gene_id),
               setequal(gene_ids, fits$ensembl_gene_id))
@@ -21,6 +26,8 @@ read_circacompare_figure_inputs <- function(fit_dir, expression_dir) {
     stopifnot(all(is.finite(fits$peak_time_hours)), all(is.finite(fits$rhythmic_q)))
     tables[[label]] <- data.frame(Row.names = gene_ids, mgi_symbol = fits$symbol,
                                   phase = fits$peak_time_hours %% 24, BH.Q = fits$rhythmic_q)
+
+    # Preserve each biological replicate for the expression traces.
     s <- layout[layout$dataset == d, ]
     stopifnot(nrow(s) > 0, !anyDuplicated(s$sample), all(s$sample %in% names(x)),
               all(is.finite(s$elapsed_or_ZT_hour)))
@@ -28,9 +35,14 @@ read_circacompare_figure_inputs <- function(fit_dir, expression_dir) {
     rownames(expression[[label]]) <- gene_ids
   }
 
+
+  # Select genes called rhythmic at BH q < 0.05 in all four datasets.
   four_way <- Reduce(intersect, lapply(tables, function(t) t$Row.names[t$BH.Q < 0.05]))
   symbols <- tables$Cartilage$mgi_symbol[match(four_way, tables$Cartilage$Row.names)]
   stopifnot(!anyNA(symbols), all(nzchar(symbols)), !anyDuplicated(symbols))
+
+  # Figure 1C plots observed replicate means and SDs at each recorded hour.
+  # Culture hours are elapsed since synchronisation and cartilage hours are ZT.
   plots <- lapply(names(ids), function(label) {
     hours <- layout$elapsed_or_ZT_hour[layout$dataset == ids[[label]]]
     y <- expression[[label]][four_way, , drop = FALSE]
