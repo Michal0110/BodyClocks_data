@@ -9,6 +9,9 @@ root = Path(__file__).resolve().parents[1]
 inputs = root / "revision/inputs"
 target = root / "results/tables"
 target.mkdir(parents=True, exist_ok=True)
+
+
+# Check the uncompressed bytes before restoring each table to the notebook's input path.
 with (inputs / "inputs.csv").open() as stream:
     for row in csv.DictReader(stream):
         name = row["file"]
@@ -25,6 +28,10 @@ for source in (inputs / "plot").glob("*/*.rds"):
     dest = mouse / source.relative_to(inputs / "plot")
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, dest)
+
+
+# The 'both' rows identify displays shared by the submitted and corrected timing runs.
+# The Dex replay builds its own display from the corrected counts.
 with (inputs / "display/sources.tsv").open() as stream:
     for row in csv.DictReader(stream, delimiter="\t"):
         if row["variant"] != "both":

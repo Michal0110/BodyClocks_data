@@ -5,11 +5,17 @@ stopifnot(length(args) == 3L, args[1] %in% c("RAIN", "eJTK", "CircaCompare"))
 method <- args[1]
 out <- args[3]
 dir.create(out, recursive = TRUE, showWarnings = FALSE)
+
+
+# Reuse the overlap and circular-distance functions that produce the manuscript figures.
 source("revision/notebook_chunks.R")
 chunks <- read_notebook_chunks("analysis/comparison_analysis_paper.rmd")
 suppressPackageStartupMessages(library(dplyr))
 eval(chunks$helper_functions)
 save_table <- function(x, name) write.csv(x, file.path(out, paste0(name, ".csv")), row.names = FALSE)
+
+
+# Read the same four expression tables for every detector. Use Ensembl IDs for membership and gene symbols for labels.
 ds <- c(Osmo = "osmo", Dex = "dex", HS = "hs", Cartilage = "cartilage_wt")
 manifest <- read.csv("revision/inputs/inputs.csv")
 tables <- lapply(ds, function(d) {
@@ -32,6 +38,8 @@ tables <- lapply(ds, function(d) {
       peak <- f$peak_time_hours
       ref <- f$rain_q
     }
+
+    # Require identical tested genes and matching RAIN q values, including the corrected Dex calls.
     ix <- match(id, f$ensembl_gene_id)
     stopifnot(setequal(id, f$ensembl_gene_id), !anyDuplicated(f$ensembl_gene_id),
               isTRUE(all.equal(ref[ix], t$rain_q)))
@@ -41,18 +49,26 @@ tables <- lapply(ds, function(d) {
   stopifnot(!anyDuplicated(id), all(is.finite(t$q)), all(is.finite(t$phase)))
   t
 })
+
+
 # The paper defines this list in crp_setup. Evaluate that single assignment.
 core_assignment <- Filter(function(x) is.call(x) && identical(x[[1]], as.name("<-")) &&
                             identical(x[[2]], as.name("core_clock_genes")), as.list(chunks$crp_setup))
 stopifnot(length(core_assignment) == 1L)
 eval(core_assignment[[1]])
 clock <- unique(unlist(lapply(tables, function(t) t$id[t$symbol %in% core_clock_genes])))
-anchor <- "ENSMUSG00000055116"
+anchor <- "ENSMUSG00000055116"  # Bmal1 sets the phase origin separately in each dataset.
 symbols <- do.call(rbind, tables)
 symbol <- setNames(symbols$symbol, symbols$id)
+
+
+# Match the manuscript's two rhythmicity cutoffs, q < 0.05 and q ≤ 0.01.
 call <- function(q, cutoff) if (cutoff == 0.05) q < cutoff else q <= cutoff
 pairs <- combn(names(ds), 2, simplify = FALSE)
 common <- lapply(tables, "[[", "id")
+
+
+# Compare detectors within each dataset, then compare datasets within the selected detector.
 overlaps <- list()
 genes <- list()
 detect <- list()
@@ -63,6 +79,8 @@ for (threshold in c(0.05, 0.01)) {
     x <- tables[[d]]
     a <- call(x$q, threshold)
     b <- call(x$rain_q, threshold)
+
+    # On the exclusion pass, remove the clock panel from the tested universe as well as the calls.
     for (drop_clock in c(FALSE, TRUE)) {
       bg <- if (drop_clock) setdiff(x$id, clock) else x$id
       test <- hypergeometric_test_pairwise_universe(x$id[a], x$id[b], bg)
@@ -71,11 +89,20 @@ for (threshold in c(0.05, 0.01)) {
         as.data.frame(test), n_clock = length(shared_clock),
         clock_genes = paste(sort(symbol[shared_clock]), collapse = "|"))
     }
-    detect[[length(detect)+1L]] <- data.frame(dataset = d, threshold, tested = nrow(x), rhythmic = sum(a),
-      rain = sum(b), shared = sum(a & b), method_only = sum(a & !b), rain_only = sum(b & !a),
-      fraction_method_in_rain = if (any(a)) sum(a & b)/sum(a) else NA_real_,
-      fraction_rain_in_method = if (any(b)) sum(a & b)/sum(b) else NA_real_)
+
+    # Report both denominators. For example, eJTK can recover a small fraction of RAIN calls
+    # while RAIN recovers nearly all eJTK calls in the same dataset.
+    detect[[length(detect) + 1L]] <- data.frame(
+      dataset = d, threshold, tested = nrow(x),
+      rhythmic = sum(a), rain = sum(b), shared = sum(a & b),
+      method_only = sum(a & !b), rain_only = sum(b & !a),
+      fraction_method_in_rain = if (any(a)) sum(a & b) / sum(a) else NA_real_,
+      fraction_rain_in_method = if (any(b)) sum(a & b) / sum(b) else NA_real_
+    )
   }
+
+
+  # For the six dataset pairs, a gene could be shared only if it was tested in both studies.
   for (drop_clock in c(FALSE, TRUE)) {
     rows <- lapply(pairs, function(g) {
       bg <- Reduce(intersect, common[g])
@@ -89,23 +116,34 @@ for (threshold in c(0.05, 0.01)) {
         clock_genes = paste(sort(symbol[intersect(ids, clock)]), collapse = "|"),
         fraction_clock = if (length(ids)) mean(ids %in% clock) else NA_real_)
     })
+
+    # One BH family per list threshold and clock-panel rule.
     family <- do.call(rbind, rows)
     family$q <- p.adjust(family$p_value, "BH")
     overlaps[[length(overlaps)+1L]] <- family
   }
 }
+
+
+# Adjust the four within-dataset comparisons together for each threshold and clock-panel rule.
 within <- bind_rows(within_dataset) %>% group_by(threshold, drop_clock) %>%
   mutate(q = p.adjust(p_value, "BH")) %>% ungroup()
 save_table(within, "within_dataset_overlap_with_RAIN")
 save_table(do.call(rbind, detect), "detection")
 save_table(do.call(rbind, overlaps), "overlap_tests")
 save_table(bind_rows(genes), "overlap_genes")
+
+
+# At the primary threshold, retain gene-level membership and count exclusive Venn regions.
 sets <- lapply(tables, function(x) x$id[x$q < .05])
 membership <- data.frame(ensembl_gene_id = unique(unlist(sets, use.names = FALSE)))
 membership$symbol <- unname(symbol[membership$ensembl_gene_id])
 membership$clock_panel <- membership$ensembl_gene_id %in% clock
 for (d in names(ds)) membership[[d]] <- membership$ensembl_gene_id %in% sets[[d]]
 save_table(membership, "rhythmic_membership")
+
+# Each row of the mask specifies one region. Subtract all excluded sets so a gene
+# in the three-way intersection cannot also count in a two-way region.
 regions <- lapply(list(names(ds)[1:3], names(ds)), function(g) {
   mask <- as.matrix(expand.grid(rep(list(c(FALSE, TRUE)), length(g))))
   mask <- mask[rowSums(mask) > 0,,drop = FALSE]
@@ -117,6 +155,9 @@ regions <- lapply(list(names(ds)[1:3], names(ds)), function(g) {
   }))
 })
 save_table(bind_rows(regions), "venn_regions")
+
+
+# Subtract each dataset's Bmal1 peak from its gene peaks on a circular 24 h scale.
 anchors <- do.call(rbind, lapply(tables, function(t) t[t$id == anchor, ]))
 stopifnot(nrow(anchors) == 4L)
 save_table(data.frame(dataset = rownames(anchors), anchors), "bmal1")
@@ -127,6 +168,10 @@ relative <- lapply(names(tables), function(d) {
 names(relative) <- names(ds)
 phase_genes <- list()
 phase_rows <- list()
+
+
+# The paper requires a rhythmic anchor. The sensitivity rules omit Bmal1 from the
+# scored genes, allow a measured subthreshold anchor, or score only the clock panel.
 for (rule in c("paper_anchor", "exclude_anchor_gene", "use_tested_anchor", "clock_panel_only")) {
   set.seed(42)
   rows <- lapply(c(pairs, list(names(ds)[1:3])), function(g) {
@@ -134,11 +179,25 @@ for (rule in c("paper_anchor", "exclude_anchor_gene", "use_tested_anchor", "cloc
     if (rule == "exclude_anchor_gene") ids <- setdiff(ids, anchor)
     if (rule == "clock_panel_only") ids <- intersect(ids, clock)
     label <- paste(g, collapse = "_vs_")
-    status <- if (!length(ids)) "empty_overlap" else if (rule != "use_tested_anchor" &&
-      any(anchors[g,"q"] >= .05)) "anchor_above_cutoff" else if (length(ids) < 2) "insufficient_genes" else "complete"
-    row <- data.frame(comparison = label, rule, shared = length(ids), concordant = NA_integer_,
-      fraction = NA_real_, null_mean = NA_real_, permutations = 0L, exceedances = NA_integer_, p = NA_real_, status)
+    # Keep an explicit missing result when a comparison cannot be tested.
+    status <- if (!length(ids)) {
+      "empty_overlap"
+    } else if (rule != "use_tested_anchor" && any(anchors[g, "q"] >= .05)) {
+      "anchor_above_cutoff"
+    } else if (length(ids) < 2) {
+      "insufficient_genes"
+    } else {
+      "complete"
+    }
+    row <- data.frame(
+      comparison = label, rule, shared = length(ids),
+      concordant = NA_integer_, fraction = NA_real_, null_mean = NA_real_,
+      permutations = 0L, exceedances = NA_integer_, p = NA_real_, status
+    )
     if (status != "complete") return(row)
+
+    # Within four hours on the shortest arc counts as concordant. A three-way call
+    # must meet the criterion in every pair.
     phases <- lapply(relative[g], "[", ids)
     is_pair <- length(g) == 2L
     near <- function(a,b) circ_dist_24(a,b) <= 4
@@ -148,20 +207,27 @@ for (rule in c("paper_anchor", "exclude_anchor_gene", "use_tested_anchor", "cloc
     row$fraction <- mean(aligned)
     phase_genes[[length(phase_genes)+1L]] <<- data.frame(comparison = label, rule, ensembl_gene_id = ids,
       symbol = unname(symbol[ids]), as.data.frame(phases), concordant = unname(aligned))
+
+    # Shuffle gene identities within datasets, keeping their phase distributions and the
+    # first dataset fixed. Reproduce the paper's seed and draw count for each test.
     if (!is_pair) set.seed(42)
     n <- if (is_pair) 1000L else 10000L
-    null <- replicate(n, if (is_pair) sum(near(phases[[1]],sample(phases[[2]]))) else
-      sum(three(phases[[1]],sample(phases[[2]]),sample(phases[[3]]))))
+    null <- replicate(
+      n,
+      if (is_pair) sum(near(phases[[1]], sample(phases[[2]]))) else
+        sum(three(phases[[1]], sample(phases[[2]]), sample(phases[[3]])))
+    )
     row$null_mean <- mean(null)/length(ids)
     row$permutations <- n
     row$exceedances <- sum(null >= row$concordant)
+    # Pairwise p is the empirical tail fraction. The three-way test adds one observed draw.
     row$p <- if (is_pair) row$exceedances/n else (1+row$exceedances)/(n+1)
     row
   })
   family <- do.call(rbind, rows)
+  # BH covers the six prespecified pairs. The separate three-culture test retains its raw p.
   family$q <- c(p.adjust(family$p[1:6], "BH", n=6), NA_real_)
   phase_rows[[rule]] <- family
 }
 save_table(bind_rows(phase_rows), "phase_tests")
 save_table(bind_rows(phase_genes), "phase_genes")
-
