@@ -29,6 +29,8 @@ tables <- lapply(ds, function(d) {
     if (method == "eJTK") {
       f <- read.csv(file.path(args[2], d, "gene_comparison.csv"))
       stopifnot(all(f$Period == 24))
+      # GammaBH adjusts across the tested genes within this dataset. Phase is the
+      # winning template's peak hour. MaxLoc would give the observed sample maximum.
       q <- f$GammaBH
       peak <- f$Phase
       ref <- f$RAIN_BH

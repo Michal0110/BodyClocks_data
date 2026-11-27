@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Run the pinned upstream eJTK on four matching BodyClocks RAIN exports.
+"""Detect rhythmic genes with empirical JTK_CYCLE (eJTK) on the four RAIN expression tables.
+
+For each gene, eJTK compares the ranks of its observations with rhythmic templates.
+The winning template supplies peak phase and trough time. The null distribution
+accounts for searching over templates. Multiplicity across genes is handled within
+each dataset. The paper's overlap and Bmal1-relative tests run in revision/compare_focal.R.
 
 Requires Python 3.12, NumPy, SciPy, pandas, statsmodels, Cython and setuptools.
 Reviewer run from the repository root:
@@ -46,27 +51,213 @@ CARTILAGE_HOURS = {
 
 
 def sample_hours(dataset):
+    """Return elapsed hours since synchronisation for cultures and Zeitgeber hours for cartilage."""
     if dataset == "cartilage_wt":
         return CARTILAGE_HOURS
 
     # Use elapsed time by sample ID. This keeps the Dex 24 h and 28 h replicates
-    # aligned with the corrected RAIN input.
+    # aligned with corrected RAIN. dex_24h_b and dex_24h_c both belong at 24 h.
+    # The excluded Dex outlier is dex_28h_b.
     with (REPO_ROOT / "data/meta" / f"{dataset}_meta.csv").open() as stream:
         rows = list(csv.DictReader(stream))
-    name, time = ("symbol", "timepoint") if dataset == "osmo" else ("sample", "time")
+    sample_column, hour_column = ("symbol", "timepoint") if dataset == "osmo" else ("sample", "time")
     hours = {}
     for row in rows:
-        hour = int(row[time].removesuffix("h"))
+        hour = int(row[hour_column].removesuffix("h"))
         if dataset == "osmo":
             if hour == 0:
                 continue  # RAIN excluded the three 0 h observations.
-            hours["X" + row[name]] = hour
+            # R prefixes column names that start with a digit when it exports Osmo samples.
+            hours["X" + row[sample_column]] = hour
         else:
-            hours[row[name]] = hour
+            hours[row[sample_column]] = hour
     return hours
 
 
+def prepare_dataset(dataset, rain_file, dataset_dir, legacy_grid, sample_times=None):
+    frame = pd.read_csv(rain_file)
+    gene_column = "CycID" if dataset == "cartilage_wt" else "Row.names"
+    if frame[gene_column].isna().any() or not frame[gene_column].is_unique:
+        raise ValueError(f"Missing or duplicate Ensembl ID in {rain_file}")
+    hours = sample_hours(dataset) if sample_times is None else sample_times
+    samples = sorted(hours, key=hours.__getitem__)
+    expression = frame.loc[:, samples]  # Normalised expression used by RAIN, one column per replicate.
+    if not np.isfinite(expression.to_numpy()).all() or np.any(expression.nunique(axis=1) < 2):
+        raise ValueError(f"Missing or constant expression series in {rain_file}")
+
+
+    # Folding maps culture samples at, for example, 4 h and 28 h to phase 4 while
+    # retaining separate expression values. Cartilage hours are already on the ZT clock.
+    # Period searches need elapsed hours so a non-24 h template can drift across cycles.
+    time_points = [hours[s] % PERIOD if legacy_grid else hours[s] for s in samples]
+    # ZT is an upstream header convention. For cultures these numbers are still
+    # hours since synchronisation modulo 24. Repeated headers retain the replicate values.
+    input_path = dataset_dir / "expression.txt"
+    with input_path.open("w") as stream:
+        writer = csv.writer(stream, delimiter="\t")
+        writer.writerow(["#", *(f"ZT{hour}" for hour in time_points)])
+        writer.writerows(zip(frame[gene_column], *expression.to_numpy().T))
+    pd.DataFrame({
+        "sample": samples,
+        "elapsed_or_ZT_hour": [hours[s] for s in samples],
+        "eJTK_input_hour": time_points,
+    }).to_csv(dataset_dir / "samples.csv", index=False)
+    return frame.set_index(gene_column), input_path
+
+
+def run_template_search(engine, dataset_dir, input_path, legacy_grid):
+    """Run the pinned waveform search and its null calibration for one sample layout."""
+    raw_path = dataset_dir / "ejtk_jtkout.txt"
+    upstream_args = [
+        str(engine / "eJTK-CalcP.py"),
+        "-f", str(input_path),
+        "-o", str(raw_path),
+        "-w", str(engine / "waveform_cosine.txt"),
+        "-p", str(engine / "periods.txt"),
+        "-s", str(engine / "phases.txt"),
+        "-a", str(engine / "asymmetries.txt"),
+    ]
+
+    # Each dataset gets its own interpreter, random seed and log. The reviewer
+    # configuration calls the upstream matcher for both expression and null profiles.
+    seed_and_run = (
+        "import sys; sys.path.insert(0, sys.argv.pop(1)); "
+        "from run_ejtk import run_upstream; run_upstream()"
+    )
+    command = [
+        sys.executable, "-B", "-c", seed_and_run, str(Path(__file__).resolve().parent),
+        str(SEED), "legacy" if legacy_grid else "fast", *upstream_args,
+    ]
+    with (dataset_dir / "run.log").open("w") as log:
+        subprocess.run(command, cwd=engine, stdout=log, stderr=subprocess.STDOUT, check=True)
+
+
+def run_dataset(dataset, rain_dir, output, engine, periods, legacy_grid, sample_times=None):
+    """Prepare samples, fit rhythmic templates, then compare calls with the matching RAIN table."""
+    dataset_dir = output / dataset
+    dataset_dir.mkdir()
+    rain_file = rain_dir / TABLES.get(dataset, f"{dataset}_circ.csv")
+    rain, input_path = prepare_dataset(dataset, rain_file, dataset_dir, legacy_grid, sample_times)
+    run_template_search(engine, dataset_dir, input_path, legacy_grid)
+
+
+    # The pinned engine scores 1,000 random normal profiles on the same sample layout
+    # and template grid as the genes. CalcP takes the minimum of the plus-one empirical
+    # tail, the template-count Bonferroni p (BF), and the fitted Gamma tail as GammaP.
+    # GammaBH adjusts those values across all tested genes in this dataset.
+    calibrated = pd.read_table(dataset_dir / "ejtk_jtkout_GammaP.txt", index_col="ID")
+    if not calibrated.index.is_unique or set(calibrated.index) != set(rain.index):
+        raise ValueError(f"eJTK and RAIN gene IDs differ for {dataset}")
+    if not calibrated["Period"].isin(periods).all() or not calibrated["GammaP"].between(0, 1).all():
+        raise ValueError(f"Invalid eJTK period or p-values for {dataset}")
+    np.testing.assert_allclose(calibrated["GammaBH"], false_discovery_control(calibrated["GammaP"]),
+                               rtol=1e-10, atol=1e-15)
+
+    # Join to the corrected RAIN table by Ensembl ID before counting overlap.
+    rain_columns = rain[["mgi_symbol", "pVal", "BH.Q"]].rename(
+        columns={"pVal": "RAIN_p", "BH.Q": "RAIN_BH"}
+    )
+    joined = calibrated.join(rain_columns)
+
+    # The original export flags q <= 0.05. The manuscript comparison applies q < 0.05
+    # to the numeric columns. Both conventions give the same calls on these four tables.
+    ejtk_significant = joined["GammaBH"] <= CUTOFF
+    rain_significant = joined["RAIN_BH"] <= CUTOFF
+    joined.assign(ejtk_significant=ejtk_significant, rain_significant=rain_significant).to_csv(
+        dataset_dir / "gene_comparison.csv", index_label="ensembl_gene_id")
+    return {
+        "dataset": dataset,
+        "tested_genes": len(joined),
+        "RAIN_significant": rain_significant.sum(),
+        "eJTK_significant": ejtk_significant.sum(),
+        "shared": (ejtk_significant & rain_significant).sum(),
+        "RAIN_only": (rain_significant & ~ejtk_significant).sum(),
+        "eJTK_only": (ejtk_significant & ~rain_significant).sum(),
+        "rain_input_sha256": hashlib.sha256(rain_file.read_bytes()).hexdigest(),
+    }
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("upstream", type=Path, help="Clone of the pinned upstream eJTK repository.")
+    parser.add_argument("rain_tables", type=Path, help="Normalised expression and corrected RAIN exports.")
+    parser.add_argument("output", type=Path, help="New directory for this run and its gene-level tables.")
+    parser.add_argument("--periods", nargs="+", type=int, default=[PERIOD],
+                        help="Candidate periods in hours. The reviewer analysis fixes the period at 24.")
+    parser.add_argument("--grid-step", type=int, choices=(1, 2),
+                        help="Spacing of peak phases and peak-to-trough widths in hours (reviewer run: 2).")
+    parser.add_argument("--sample-hours", type=Path, help="CSV with dataset, sample and hour columns")
+    args = parser.parse_args()
+    samples = dict.fromkeys(TABLES)
+    if args.sample_hours:
+        layout = pd.read_csv(args.sample_hours)
+        if layout[["dataset", "sample", "hour"]].isna().any().any() or layout.duplicated(["dataset", "sample"]).any():
+            parser.error("Sample hours must uniquely identify each dataset and sample with a finite hour.")
+        if not np.isfinite(layout["hour"]).all() or not layout["dataset"].str.fullmatch(r"[a-zA-Z0-9_]+").all():
+            parser.error("Sample hours must be numeric and dataset names must be alphanumeric or underscores.")
+        samples = {name: dict(zip(rows["sample"], rows["hour"]))
+                   for name, rows in layout.groupby("dataset", sort=False)}
+        if not samples:
+            parser.error("The sample hours CSV is empty.")
+
+
+    # The reviewer run uses the upstream two-hour phase and peak-to-trough width grid.
+    # The optional one-hour grid uses the cached rank scan for the larger template search.
+    periods = sorted(set(args.periods))
+    if min(periods) < 4:
+        parser.error("Periods must be at least 4 hours.")
+    step = args.grid_step or (2 if periods == [PERIOD] else 1)
+    legacy_grid = periods == [PERIOD] and step == 2
+    if step == 2 and not legacy_grid:
+        parser.error("Use a 1-hour grid for a search outside the original 24-hour configuration.")
+    output = args.output.resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    engine = prepare_upstream(args.upstream.resolve(), output, legacy_grid)
+
+
+    # Phase is the template peak. Width is the forward time from peak to trough.
+    # At 24 h, width 12 is symmetric. Shorter and longer widths allow asymmetric rhythms.
+    # The two-hour grid has 12 possible peak positions and 11 widths. Reciprocal
+    # peak/trough pairs share a template because the matcher considers both signs (66 templates).
+    phases = list(range(0, max(periods), step))
+    widths = list(range(step, max(periods), step))
+    for name, grid in {"periods": periods, "phases": phases, "asymmetries": widths}.items():
+        (engine / f"{name}.txt").write_text("\n".join(map(str, grid)) + "\n")
+    settings = {
+        "upstream_commit": UPSTREAM_COMMIT,
+        "period_hours": periods,
+        "phase_hours": phases,
+        "width_hours": widths,
+        "templates_by_period": {p: 66 if legacy_grid else comb(p, 2) for p in periods},
+        "null_draws_per_dataset": 1000,  # Built into this version of upstream eJTK.
+        "seed": SEED,
+        "dataset_BH_cutoff": CUTOFF,
+        "python": sys.version.split()[0],
+    }
+    if args.sample_hours:
+        settings["sample_hours_sha256"] = hashlib.sha256(args.sample_hours.read_bytes()).hexdigest()
+    (output / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
+
+
+    # Datasets can run independently. Save finished rows in input order as each fit returns.
+    results = {}
+    rain_tables = args.rain_tables.resolve()
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        pending = {pool.submit(run_dataset, dataset, rain_tables, output, engine, periods, legacy_grid,
+                               sample_times): dataset for dataset, sample_times in samples.items()}
+        for future in as_completed(pending):
+            dataset = pending[future]
+            results[dataset] = future.result()
+            rows = [results[name] for name in samples if name in results]
+            pd.DataFrame(rows).to_csv(output / "summary.csv", index=False)
+            print(dataset, results[dataset]["eJTK_significant"], flush=True)
+
+
+# Upstream compatibility
+# The functions below adapt the pinned Python 2 engine to the project's Python 3
+# environment. The fixed-24 h analysis uses its original Kendall template matcher.
 def prepare_upstream(upstream, output, legacy_grid):
+    """Build a run-local copy from the pinned Git objects so Python 3 edits stay reproducible."""
     commit = subprocess.check_output(["git", "-C", str(upstream), "rev-parse", "HEAD"], text=True).strip()
     if commit != UPSTREAM_COMMIT:
         raise ValueError(f"Expected upstream {UPSTREAM_COMMIT}, found {commit}")
@@ -108,7 +299,7 @@ def prepare_upstream(upstream, output, legacy_grid):
 
 
 class RankScan:
-    """Evaluate the upstream Kendall tau-b against a cached set of templates."""
+    """Optional one-hour grid matcher. Cache each template's ranks across genes and null draws."""
 
     def __init__(self, pick_best_match):
         self.pick_best_match = pick_best_match
@@ -145,11 +336,13 @@ class RankScan:
                                    np.where(reverse, nadirs, phases), np.where(reverse, phases, nadirs),
                                    np.full(len(selected), hours[values.argmax()]),
                                    np.full(len(selected), hours[values.argmin()])))
-        r = self.pick_best_match(matches)
-        return [series[0], waveform, *r[2:], r[0], r[1]]
+        # Delegate ties to the upstream rule, including its seeded random choice if ties remain.
+        best_match = self.pick_best_match(matches)
+        return [series[0], waveform, *best_match[2:], best_match[0], best_match[1]]
 
 
 def run_upstream():
+    """Child-process entry point: seed both random tie-breaking and simulated null profiles."""
     np.random.seed(int(sys.argv.pop(1)))
     mode = sys.argv.pop(1)
     sys.argv.pop(0)
@@ -160,140 +353,6 @@ def run_upstream():
 
         eJTK.a_get_best_match = RankScan(pick_best_match)
     runpy.run_path(sys.argv[0], run_name="__main__")
-
-
-def prepare_dataset(dataset, rain_file, dataset_dir, legacy_grid, sample_times=None):
-    frame = pd.read_csv(rain_file)
-    gene_column = "CycID" if dataset == "cartilage_wt" else "Row.names"
-    if frame[gene_column].isna().any() or not frame[gene_column].is_unique:
-        raise ValueError(f"Missing or duplicate Ensembl ID in {rain_file}")
-    hours = sample_hours(dataset) if sample_times is None else sample_times
-    samples = sorted(hours, key=hours.__getitem__)
-    counts = frame.loc[:, samples]
-    if not np.isfinite(counts.to_numpy()).all() or np.any(counts.nunique(axis=1) < 2):
-        raise ValueError(f"Missing or constant expression series in {rain_file}")
-
-
-    # The fixed 24 h run folds the two cycles onto one clock, retaining each replicate.
-    # Period searches need elapsed hours so a non-24 h template can drift across cycles.
-    time_points = [hours[s] % PERIOD if legacy_grid else hours[s] for s in samples]
-    input_path = dataset_dir / "expression.txt"
-    with input_path.open("w") as stream:
-        writer = csv.writer(stream, delimiter="\t")
-        writer.writerow(["#", *(f"ZT{hour}" for hour in time_points)])
-        writer.writerows(zip(frame[gene_column], *counts.to_numpy().T))
-    pd.DataFrame({"sample": samples, "elapsed_or_ZT_hour": [hours[s] for s in samples],
-                  "eJTK_input_hour": time_points}).to_csv(
-        dataset_dir / "samples.csv", index=False)
-    return frame.set_index(gene_column), input_path
-
-
-def run_dataset(dataset, rain_dir, output, engine, periods, legacy_grid, sample_times=None):
-    dataset_dir = output / dataset
-    dataset_dir.mkdir()
-    rain_file = rain_dir / TABLES.get(dataset, f"{dataset}_circ.csv")
-    rain, input_path = prepare_dataset(dataset, rain_file, dataset_dir, legacy_grid, sample_times)
-    raw_path = dataset_dir / "ejtk_jtkout.txt"
-    argv = [str(engine / "eJTK-CalcP.py"), "-f", str(input_path), "-o", str(raw_path),
-            "-w", str(engine / "waveform_cosine.txt"), "-p", str(engine / "periods.txt"),
-            "-s", str(engine / "phases.txt"), "-a", str(engine / "asymmetries.txt")]
-
-    # Run the upstream command in a separate interpreter so it sees its own arguments,
-    # random seed and compiled extension.
-    seed_and_run = (
-        "import sys; sys.path.insert(0, sys.argv.pop(1)); "
-        "from run_ejtk import run_upstream; run_upstream()"
-    )
-    with (dataset_dir / "run.log").open("w") as stream:
-        subprocess.run([sys.executable, "-B", "-c", seed_and_run, str(Path(__file__).resolve().parent),
-                        str(SEED), "legacy" if legacy_grid else "fast", *argv],
-                       cwd=engine, stdout=stream, stderr=subprocess.STDOUT, check=True)
-
-
-    # Read the upstream Gamma-calibrated p values and verify its BH adjustment over genes.
-    calibrated = pd.read_table(dataset_dir / "ejtk_jtkout_GammaP.txt", index_col="ID")
-    if not calibrated.index.is_unique or set(calibrated.index) != set(rain.index):
-        raise ValueError(f"eJTK and RAIN gene IDs differ for {dataset}")
-    if not calibrated["Period"].isin(periods).all() or not calibrated["GammaP"].between(0, 1).all():
-        raise ValueError(f"Invalid eJTK period or p-values for {dataset}")
-    np.testing.assert_allclose(calibrated["GammaBH"], false_discovery_control(calibrated["GammaP"]),
-                               rtol=1e-10, atol=1e-15)
-
-    # Join to the corrected RAIN table by Ensembl ID before counting overlap.
-    joined = calibrated.join(rain[["mgi_symbol", "pVal", "BH.Q"]].rename(
-        columns={"pVal": "RAIN_p", "BH.Q": "RAIN_BH"}))
-    ejtk = joined["GammaBH"] <= CUTOFF
-    rain_significant = joined["RAIN_BH"] <= CUTOFF
-    joined.assign(ejtk_significant=ejtk, rain_significant=rain_significant).to_csv(
-        dataset_dir / "gene_comparison.csv", index_label="ensembl_gene_id")
-    return {
-        "dataset": dataset, "tested_genes": len(joined), "RAIN_significant": rain_significant.sum(),
-        "eJTK_significant": ejtk.sum(), "shared": (ejtk & rain_significant).sum(),
-        "RAIN_only": (rain_significant & ~ejtk).sum(), "eJTK_only": (ejtk & ~rain_significant).sum(),
-        "rain_input_sha256": hashlib.sha256(rain_file.read_bytes()).hexdigest(),
-    }
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("upstream", type=Path)
-    parser.add_argument("rain_tables", type=Path)
-    parser.add_argument("output", type=Path)
-    parser.add_argument("--periods", nargs="+", type=int, default=[PERIOD])
-    parser.add_argument("--grid-step", type=int, choices=(1, 2))
-    parser.add_argument("--sample-hours", type=Path, help="CSV with dataset, sample and hour columns")
-    args = parser.parse_args()
-    samples = dict.fromkeys(TABLES)
-    if args.sample_hours:
-        layout = pd.read_csv(args.sample_hours)
-        if layout[["dataset", "sample", "hour"]].isna().any().any() or layout.duplicated(["dataset", "sample"]).any():
-            parser.error("Sample hours must uniquely identify each dataset and sample with a finite hour.")
-        if not np.isfinite(layout["hour"]).all() or not layout["dataset"].str.fullmatch(r"[a-zA-Z0-9_]+").all():
-            parser.error("Sample hours must be numeric and dataset names must be alphanumeric or underscores.")
-        samples = {name: dict(zip(rows["sample"], rows["hour"]))
-                   for name, rows in layout.groupby("dataset", sort=False)}
-        if not samples:
-            parser.error("The sample hours CSV is empty.")
-
-
-    # The reviewer run uses the upstream two-hour phase and peak-to-trough width grid.
-    # The optional one-hour grid uses the cached rank scan for the larger template search.
-    periods = sorted(set(args.periods))
-    if min(periods) < 4:
-        parser.error("Periods must be at least 4 hours.")
-    step = args.grid_step or (2 if periods == [PERIOD] else 1)
-    legacy_grid = periods == [PERIOD] and step == 2
-    if step == 2 and not legacy_grid:
-        parser.error("Use a 1-hour grid for a search outside the original 24-hour configuration.")
-    output = args.output.resolve()
-    output.mkdir(parents=True, exist_ok=False)
-    engine = prepare_upstream(args.upstream.resolve(), output, legacy_grid)
-    phases = list(range(0, max(periods), step))
-    widths = list(range(step, max(periods), step))
-    for name, grid in {"periods": periods, "phases": phases, "asymmetries": widths}.items():
-        (engine / f"{name}.txt").write_text("\n".join(map(str, grid)) + "\n")
-    settings = {"upstream_commit": UPSTREAM_COMMIT, "period_hours": periods,
-                "phase_hours": phases, "width_hours": widths,
-                "templates_by_period": {p: 66 if legacy_grid else comb(p, 2) for p in periods},
-                "null_draws_per_dataset": 1000, "seed": SEED, "dataset_BH_cutoff": CUTOFF,
-                "python": sys.version.split()[0]}
-    if args.sample_hours:
-        settings["sample_hours_sha256"] = hashlib.sha256(args.sample_hours.read_bytes()).hexdigest()
-    (output / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
-
-
-    # Datasets can run independently. Save finished rows in input order as each fit returns.
-    results = {}
-    rain_tables = args.rain_tables.resolve()
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        pending = {pool.submit(run_dataset, dataset, rain_tables, output, engine, periods, legacy_grid,
-                               sample_times): dataset for dataset, sample_times in samples.items()}
-        for future in as_completed(pending):
-            dataset = pending[future]
-            results[dataset] = future.result()
-            rows = [results[name] for name in samples if name in results]
-            pd.DataFrame(rows).to_csv(output / "summary.csv", index=False)
-            print(dataset, results[dataset]["eJTK_significant"], flush=True)
 
 
 if __name__ == "__main__":
