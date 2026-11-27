@@ -1,0 +1,35 @@
+{
+  "upstream_commit": "0159108946cab048ed0ec77810d793c6be0f4166",
+  "period_hours": 24,
+  "phase_hours": [
+    0,
+    2,
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16,
+    18,
+    20,
+    22
+  ],
+  "width_hours": [
+    2,
+    4,
+    6,
+    8,
+    10,
+    12,
+    14,
+    16,
+    18,
+    20,
+    22
+  ],
+  "null_draws_per_dataset": 1000,
+  "seed": 20261124,
+  "dataset_BH_cutoff": 0.05,
+  "python": "3.12.3"
+}
