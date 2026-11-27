@@ -11,8 +11,6 @@ pre-processing and rhythmicity analyses, adds functional annotations and STRING 
 networks, and generates both the app-ready data and the manuscript figures and supplementary 
 tables.
 
-[Fixed-24-hour eJTK reviewer summary, code, calls and figures](alternative_processing/ejtk/README.md)
-
 The workflow begins with gene-level count or expression matrices supplied in data/raw/.
 FASTQ quality control, trimming and genome alignment for newly generated sequencing 
 data are described in the manuscript but are not performed within this repository.
@@ -178,5 +176,7 @@ and `data_manifest.csv`.
 ## Manuscript revision
 
 [Corrected Dex RAIN, figure replacement checklist and reproducible inputs](revision/README.md)
+
+[Fixed-24-hour eJTK reviewer summary, code, calls and figures](alternative_processing/ejtk/README.md)
 
 [CircaCompare reviewer summary, test-by-test comparison, calls and manuscript figures](alternative_processing/circacompare/README.md)
