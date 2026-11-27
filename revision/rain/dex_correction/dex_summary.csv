@@ -1,0 +1,11 @@
+"metric","value","corrected"
+"Tested genes",12323,12323
+"Rhythmic genes (BH.Q < 0.05)",2008,2043
+"Rhythmic genes (BH.Q <= 0.01)",596,624
+"Rhythmic in both (BH.Q < 0.05)",1717,NA
+"Lost rhythmicity at 0.05",291,NA
+"Gained rhythmicity at 0.05",326,NA
+"Changed phase among genes rhythmic in both",220,NA
+"Genes with changed raw p-value",12008,NA
+"Genes with changed phase",2303,NA
+"Rhythmic-set Jaccard at 0.05",0.735646958011997,NA

@@ -1,0 +1,7 @@
+comparison,field,original,corrected
+Osmo_vs_Dex_vs_HS,n_genes,64,62
+Osmo_vs_Dex_vs_HS,n_concordant,23,20
+Osmo_vs_Dex_vs_HS,pct_concordant,35.9,32.3
+Osmo_vs_Dex_vs_HS,perm_null_mean_pct,19.4,17.9
+Osmo_vs_Dex_vs_HS,perm_p_value,0.0006999300069993,0.0030996900309969
+Osmo_vs_Dex_vs_HS,n_perm_as_or_more_extreme,6,30
